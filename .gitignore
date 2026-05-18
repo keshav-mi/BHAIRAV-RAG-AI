@@ -1,0 +1,38 @@
+# Secrets
+.env
+
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Editor/OS
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local databases and runtime artifacts
+*.db
+*.sqlite
+*.sqlite3
+
+# Evaluation outputs and generated reports
+eval_outputs/
+eval/results/
+rag test/eval_results/
+
+# Model/index artifacts (large generated files)
+indexes/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
