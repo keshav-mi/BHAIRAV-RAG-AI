@@ -28,6 +28,8 @@ rag test/eval_results/
 
 # Model/index artifacts (large generated files)
 indexes/
+indexes.zip
+*.zip
 
 # Logs and temporary files
 *.log

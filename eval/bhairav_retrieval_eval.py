@@ -68,6 +68,10 @@ def run_eval(
     per_query = []
     by_source_rows: dict[str, list] = defaultdict(list)
 
+    if stage == "after_neighbors":
+        print(
+            "NOTE: after_neighbors is diagnostic only — use after_rerank for regression gates."
+        )
     print(f"Evaluating {len(triplets)} queries | stage={stage} | K={k_values}")
 
     for i, row in enumerate(triplets, 1):
@@ -76,7 +80,7 @@ def run_eval(
         source = row.get("source", "unknown")
 
         try:
-            retrieved, _meta = retrieve_ids(
+            retrieved, trace = retrieve_ids(
                 q,
                 stage=stage,
                 top_k=top_k_retrieve,
@@ -85,12 +89,24 @@ def run_eval(
         except Exception as e:
             print(f"  [{i}] ERROR: {q[:60]!r} -> {e}")
             retrieved = []
+            trace = {}
 
         scores = score_one_query(retrieved, gold, k_values)
         scores["query"] = q
         scores["gold"] = gold
         scores["source"] = source
         scores["hit@5"] = scores.get("recall@5", 0) >= 1.0
+        scores["rerank_used"] = trace.get("rerank_used", False)
+        scores["neighbors_used"] = trace.get("neighbors_used", False)
+        scores["confidence_band"] = trace.get("confidence_band")
+        scores["faiss_top1_score"] = trace.get("faiss_top1_score")
+        scores["intent"] = trace.get("intent")
+        scores["latency_retrieve_ms"] = trace.get("latency_retrieve_ms")
+        scores["latency_rerank_ms"] = trace.get("latency_rerank_ms")
+        flags = trace.get("status_flags") or {}
+        scores["gemini_ok"] = flags.get("gemini_ok", False)
+        scores["wikidata_ok"] = flags.get("wikidata_ok", False)
+        scores["offline_entity_used"] = flags.get("offline_entity_used", False)
         per_query.append(scores)
         by_source_rows[source].append(scores)
 

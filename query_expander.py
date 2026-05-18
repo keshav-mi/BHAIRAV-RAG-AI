@@ -18,13 +18,24 @@
 import re
 import json
 from pathlib import Path
-from config import BASE_DIR
+
 import requests
 from groq import Groq
+from indic_transliteration import sanscript
+from indic_transliteration.sanscript import transliterate
 from rapidfuzz import process, fuzz
 from typing import Tuple, List
 
-from config import GROQ_MODEL, XLIT_API_URL, XLIT_TIMEOUT, XLIT_TOP_K
+from config import (
+    DATA_DIR,
+    GROQ_MODEL,
+    INDICXLIT_FALLBACK,
+    INDICXLIT_TIMEOUT_SEC,
+    REQUIRE_HARVESTED_MAPS,
+    XLIT_API_URL,
+    XLIT_TIMEOUT,
+    XLIT_TOP_K,
+)
 
 
 # ── Entity synonym map ──────────────────────────────────────
@@ -82,6 +93,46 @@ for _canonical, _synonyms in ENTITY_SYNONYMS.items():
 
 ENGLISH_ENTITY_MAP = {}
 
+# Seed roman → Devanagari when harvested maps are absent (BUG-1 quick wins)
+ENTITY_ROMAN_SEED = {
+    "ekalavya": "एकलव्य",
+    "eklavaya": "एकलव्य",
+    "arjuna": "अर्जुन",
+    "arjun": "अर्जुन",
+    "krishna": "कृष्ण",
+    "bhishma": "भीष्म",
+    "bhishm": "भीष्म",
+    "draupadi": "द्रौपदी",
+    "rama": "राम",
+    "ram": "राम",
+    "sita": "सीता",
+    "hanuman": "हनुमान",
+}
+
+
+def transliterate_roman_token(token: str) -> str | None:
+    """
+    Deterministic HK/ITRANS transliteration for a single roman entity token.
+    Mirrors query_normalizer.transliterate_entities (P3).
+    """
+    if any("\u0900" <= ch <= "\u097F" for ch in token):
+        return token
+
+    clean = re.sub(r"[^\w]", "", token).lower()
+    if clean in ENTITY_ROMAN_SEED:
+        return ENTITY_ROMAN_SEED[clean]
+    if clean in ENGLISH_ENTITY_MAP:
+        return ENGLISH_ENTITY_MAP[clean]
+
+    for scheme in (sanscript.HK, sanscript.ITRANS, sanscript.VELTHUIS, sanscript.SLP1):
+        try:
+            deva = transliterate(clean, scheme, sanscript.DEVANAGARI)
+            if deva and any("\u0900" <= ch <= "\u097F" for ch in deva):
+                return deva
+        except Exception:
+            continue
+    return None
+
 
 def load_harvested_maps():
     """
@@ -94,13 +145,16 @@ def load_harvested_maps():
     global SYNONYM_LOOKUP
     global ENGLISH_ENTITY_MAP
 
-    try:
-        entity_map_path = BASE_DIR / "data" / "entity_map_clean.json"
-        epithet_map_path = BASE_DIR / "data" / "epithet_map.json"
+    entity_map_path = DATA_DIR / "entity_map_clean.json"
+    epithet_map_path = DATA_DIR / "epithet_map.json"
+    entity_loaded = epithet_loaded = False
 
+    try:
         # ── ENTITY MAP ──────────────────────────────────────
-        if entity_map_path.exists():
-            with open(entity_map_path, "r", encoding="utf-8") as f:
+        map_file = entity_map_path if entity_map_path.exists() else DATA_DIR / "entity_map_seed.json"
+        if map_file.exists():
+            entity_loaded = True
+            with open(map_file, "r", encoding="utf-8") as f:
                 entity_data = json.load(f)
 
             for english_name, payload in entity_data.items():
@@ -121,6 +175,7 @@ def load_harvested_maps():
 
         # ── EPITHET MAP ─────────────────────────────────────
         if epithet_map_path.exists():
+            epithet_loaded = True
             with open(epithet_map_path, "r", encoding="utf-8") as f:
                 epithet_data = json.load(f)
 
@@ -145,14 +200,28 @@ def load_harvested_maps():
                 reverse_existing.add(epithet)
                 SYNONYM_LOOKUP[canonical] = list(reverse_existing)
 
+        for roman, deva in ENTITY_ROMAN_SEED.items():
+            ENGLISH_ENTITY_MAP.setdefault(roman, deva)
+
         print(
-            f"✅ Harvested maps loaded | "
-            f"Synonym entries: {len(SYNONYM_LOOKUP):,} | "
-            f"English entities: {len(ENGLISH_ENTITY_MAP):,}"
+            f"Harvested maps | entity_json={entity_loaded} epithet_json={epithet_loaded} | "
+            f"synonyms={len(SYNONYM_LOOKUP):,} english_entities={len(ENGLISH_ENTITY_MAP):,}"
         )
 
+        if REQUIRE_HARVESTED_MAPS and not (entity_loaded and epithet_loaded):
+            raise FileNotFoundError(
+                f"REQUIRE_HARVESTED_MAPS=true but missing {entity_map_path} or {epithet_map_path}. "
+                "See data/README.md"
+            )
+
     except Exception as e:
-        print(f"⚠️ Harvested map loading skipped: {e}")
+        if REQUIRE_HARVESTED_MAPS:
+            raise
+        print(f"Harvested map loading skipped: {e}")
+        for roman, deva in ENTITY_ROMAN_SEED.items():
+            ENGLISH_ENTITY_MAP.setdefault(roman, deva)
+
+
 load_harvested_maps()
 
 # ── Domain signals ──────────────────────────────────────────
@@ -213,9 +282,12 @@ STOP_WORDS = {
 # ─────────────────────────────────────────────────────────────
 
 def transliterate_word(word: str) -> List[str]:
+    if not INDICXLIT_FALLBACK:
+        return []
     try:
         url = XLIT_API_URL.format(word=word.lower())
-        resp = requests.get(url, timeout=XLIT_TIMEOUT)
+        timeout = min(XLIT_TIMEOUT, INDICXLIT_TIMEOUT_SEC)
+        resp = requests.get(url, timeout=timeout)
         if resp.status_code == 200:
             data = resp.json()
             candidates = data.get("output", [{}])[0].get("inDataList", [])
@@ -246,9 +318,15 @@ def transliterate_query(query: str) -> Tuple[str, List[str]]:
         if len(clean) <= 2 or clean in STOP_WORDS:
             continue
 
-        # ── HARVESTED ENTITY MAP FIRST ───────────────────
+        # ── Harvested map / seed ─────────────────────────
         if clean in ENGLISH_ENTITY_MAP:
             devanagari_found.append(ENGLISH_ENTITY_MAP[clean])
+            continue
+
+        # ── HK / ITRANS (deterministic, entity tokens only) ─
+        hk_deva = transliterate_roman_token(clean)
+        if hk_deva:
+            devanagari_found.append(hk_deva)
             continue
 
         # ── IndicXlit fallback ───────────────────────────

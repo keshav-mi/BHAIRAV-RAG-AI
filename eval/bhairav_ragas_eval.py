@@ -74,22 +74,22 @@ def fetch_direct(query: str, top_k: int = 15) -> dict:
     retriever, reranker = load_components()
     generator = Generator()
 
-    candidates, _, _, _ = retriever.retrieve(query, top_k=40)
+    from confidence import neighbors_allowed
+    from config import NEIGHBOR_WINDOW
+
+    candidates, _, _, _, retrieval_meta = retriever.retrieve(query, top_k=40)
     script = (
         "devanagari"
         if any("\u0900" <= c <= "\u097f" for c in query)
         else "english"
     )
-    top_chunks = reranker.rerank(query, candidates, top_n=top_k, script=script)
-    reranked_ids = [(c["id"], c.get("rerank_score", 1.0)) for c in top_chunks]
-    expanded = retriever.get_neighbor_chunks(reranked_ids, window=1)
-
-    seen = set()
-    final = []
-    for c in expanded:
-        if c["id"] not in seen:
-            final.append(c)
-            seen.add(c["id"])
+    top_chunks = reranker.rerank(
+        query, candidates, top_n=top_k, script=script, retrieval_meta=retrieval_meta
+    )
+    if neighbors_allowed(retrieval_meta.get("confidence_band", "low")):
+        final = retriever.append_neighbor_chunks(top_chunks, window=NEIGHBOR_WINDOW)
+    else:
+        final = top_chunks
 
     answer, citations = generator.generate(query, final[:15])
     unload()

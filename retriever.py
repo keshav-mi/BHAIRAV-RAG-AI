@@ -1,14 +1,11 @@
 # ============================================================
-# BHAIRAV AI - RETRIEVER v8 (OPTIMIZED)
-# Key fixes:
-#   - Batch embed all variants at once (not serial)
-#   - Remove window=1 before reranker (do it AFTER)
-#   - Simplify multi-query to single variant for now
+# BHAIRAV AI - RETRIEVER v9
+# FAISS confidence gate metadata, intent-aware top_k, neighbor append
 # ============================================================
 
 import json
 import pickle
-from typing import List
+from typing import Dict, List, Tuple
 
 import faiss
 import numpy as np
@@ -16,6 +13,7 @@ from groq import Groq
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
 
+from confidence import confidence_from_faiss
 from config import (
     BM25_PATH,
     DOMAIN_BOOST,
@@ -24,13 +22,16 @@ from config import (
     FAISS_TOP_K,
     GROQ_API_KEY,
     ID_MAP_PATH,
+    INTENT_ROUTER_ENABLED,
     METADATA_PATH,
     RRF_K,
+    YAJURVEDA_DOMAIN_BOOST,
 )
 from multi_query import generate_query_variants
 from mw_grounding import NonEntityGrounder
 from query_expander import expand_query
 from query_normalizer import QueryNormalizer
+from query_plan import build_query_plan, faiss_variants_for_plan
 
 try:
     from config import MW_INDEX_PATH
@@ -109,6 +110,9 @@ class Retriever:
 
     def bm25_search(self, query, top_k):
         tokens = query.split()
+        if not tokens:
+            return []
+        # Full-corpus scan — O(N); see config / plan for sparse-index future work
         scores = self.bm25.get_scores(tokens)
         idxs = np.argsort(scores)[::-1][:top_k]
         return [(self.chunk_ids[i], float(scores[i])) for i in idxs if scores[i] > 0]
@@ -122,16 +126,17 @@ class Retriever:
         for rank, (cid, _) in enumerate(bm25_res):
             rrf[cid] = rrf.get(cid, 0) + 1 / (k + rank + 1)
 
-        if domains:
-            for cid in rrf:
-                source = self.metadata.get(cid, {}).get("source", "")
-                if source in domains:
-                    rrf[cid] *= DOMAIN_BOOST
+        for cid in rrf:
+            source = self.metadata.get(cid, {}).get("source", "")
+            if domains and source in domains:
+                rrf[cid] *= DOMAIN_BOOST
+            if source == "Yajurveda":
+                rrf[cid] *= YAJURVEDA_DOMAIN_BOOST
 
         return sorted(rrf.items(), key=lambda x: x[1], reverse=True)
 
     def get_neighbor_chunks(self, ranked_ids, window=1):
-        """Expand context around top chunks. Call AFTER reranking, not before."""
+        """Legacy: index-order neighbors (used only if append helper not called)."""
         chunks, seen = [], set()
 
         for cid, score in ranked_ids:
@@ -149,32 +154,69 @@ class Retriever:
 
         return chunks
 
+    def append_neighbor_chunks(
+        self,
+        ranked_chunks: List[Dict],
+        window: int = 1,
+    ) -> List[Dict]:
+        """
+        Preserve rerank order; append adjacent verses after each hit (generation context).
+        """
+        result: List[Dict] = []
+        seen: set = set()
+
+        for chunk in ranked_chunks:
+            cid = chunk["id"]
+            score = chunk.get("rerank_score", chunk.get("score", 1.0))
+
+            if cid not in seen:
+                result.append(dict(chunk))
+                seen.add(cid)
+
+            idx = self.rev_id_map.get(cid)
+            if idx is None:
+                continue
+
+            for i in range(idx - window, idx + window + 1):
+                if i == idx:
+                    continue
+                nid = self.id_map.get(str(i))
+                if not nid or nid in seen or nid not in self.metadata:
+                    continue
+                neighbor = dict(self.metadata[nid])
+                neighbor["score"] = score
+                neighbor["is_neighbor"] = True
+                result.append(neighbor)
+                seen.add(nid)
+
+        return result
+
     def retrieve(self, query: str, top_k: int = FAISS_TOP_K):
-        # STEP 1 - normalize
         norm = self.normalizer.normalize(query)
 
-        # STEP 2 - MW grounding
         mw = self.mw_grounder.ground(query, norm["entities"])
         if mw["sources_used"]:
             print(f"   MW sources fired : {mw['sources_used']}")
             print(f"   MW augmented     : {mw['augmented'][:120]}")
 
-        # STEP 3 - expansion
         exp_faiss, exp_bm25, domains = expand_query(query, self.groq_client)
 
-        # STEP 4 - FAISS query
         combined_faiss = f"{norm['augmented']} {mw['augmented']} {exp_faiss}"
         faiss_query = " ".join(dict.fromkeys(combined_faiss.split()))
 
-        # STEP 5 - BM25 query
         combined_bm25 = f"{norm['augmented']} {exp_bm25}"
         valid_tokens = [
             t for t in combined_bm25.split() if t in query.split() or t in self.bm25.idf
         ]
         bm25_query = " ".join(dict.fromkeys(valid_tokens))
 
-        # STEP 6 - Multi-query
-        variants = generate_query_variants(faiss_query)
+        if INTENT_ROUTER_ENABLED:
+            plan = build_query_plan(faiss_query)
+            top_k = plan.faiss_top_k
+            variants = faiss_variants_for_plan(plan)
+        else:
+            plan = None
+            variants = generate_query_variants(faiss_query)
 
         if len(variants) > 1:
             vecs = self.embed_queries_batch(variants)
@@ -191,13 +233,24 @@ class Retriever:
         print(f"   FAISS base query : {faiss_query[:120]}...")
         print(f"   BM25 tokens      : {bm25_query.split()}")
 
-        # STEP 7 - Merge
         ranked_ids = self.reciprocal_rank_fusion(
             all_faiss_results,
             all_bm25_results,
             domains,
         )
 
-        # STEP 8 - Return ranked ids only
+        conf = confidence_from_faiss(all_faiss_results)
+        status_flags = dict(norm.get("status_flags", {}))
+        status_flags["mw_sources"] = mw.get("sources_used", [])
+
+        retrieval_meta = {
+            **conf,
+            "intent": plan.intent if plan else None,
+            "status_flags": status_flags,
+            "faiss_query": faiss_query,
+            "bm25_query": bm25_query,
+            "domains": domains,
+        }
+
         chunks = [dict(self.metadata[cid], score=score) for cid, score in ranked_ids]
-        return chunks, faiss_query, bm25_query, domains
+        return chunks, faiss_query, bm25_query, domains, retrieval_meta

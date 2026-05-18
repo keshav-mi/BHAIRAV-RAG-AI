@@ -77,7 +77,8 @@ def main():
         print(f"Missing {TRIPLETS}. Run mining first or pass --skip-mine after creating triplets.")
         return 1
 
-    for stage in ("after_retrieve", "after_rerank"):
+    # Primary regression gate: after_rerank only (see plan v2 review)
+    for stage in ("after_rerank",):
         code = run(
             [
                 py,

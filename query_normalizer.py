@@ -25,7 +25,8 @@ from google.genai import types
 from indic_transliteration import sanscript
 from indic_transliteration.sanscript import transliterate
 
-from config import BASE_DIR
+from config import BASE_DIR, MW_NETWORK_ENABLED, WIKIDATA_ENABLED
+
 logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────
 # Constants
@@ -164,7 +165,32 @@ def cache_set(conn: sqlite3.Connection, entity: str, aliases: list[str], source:
 # P2 — Wikidata Entity Resolution
 # ─────────────────────────────────────────────
 
+def offline_extract_entities(query: str) -> list[str]:
+    """
+    When Gemini is unavailable: extract likely proper-noun tokens from the query.
+    """
+    stop = {
+        "who", "what", "when", "where", "why", "how", "which", "the", "a", "an",
+        "is", "was", "were", "are", "did", "does", "do", "in", "on", "at", "to",
+        "for", "of", "and", "or", "ka", "ki", "ke", "ko", "kya", "hai", "tha",
+        "the", "about", "tell", "me", "story", "of",
+    }
+    tokens = []
+    for word in re.findall(r"[\w']+", query):
+        w = word.strip("'")
+        low = w.lower()
+        if low in stop or len(low) < 3:
+            continue
+        if any("\u0900" <= ch <= "\u097F" for ch in w):
+            tokens.append(w)
+        elif w[0].isupper() or len(w) >= 4:
+            tokens.append(w)
+    return list(dict.fromkeys(tokens))[:5]
+
+
 def wikidata_search(entity: str) -> Optional[str]:
+    if not WIKIDATA_ENABLED:
+        return None
     """
     Search Wikidata for entity QID.
     Appends 'Hindu mythology' to bias toward Dharmic results.
@@ -228,6 +254,8 @@ def wikidata_aliases(qid: str) -> list[str]:
 
 
 def resolve_wikidata(entity: str) -> tuple[list[str], bool]:
+    if not WIKIDATA_ENABLED:
+        return [], False
     qid = wikidata_search(entity)
     if not qid:
         return [], False
@@ -279,6 +307,8 @@ def monier_williams_lookup(query: str) -> list[str]:
     Reverse meaning lookup via Cologne MW API.
     Only called when no entity resolved AND query is epithet/meaning based.
     """
+    if not MW_NETWORK_ENABLED:
+        return []
     stop_words = {
         "who", "what", "is", "was", "the", "a", "an", "of",
         "in", "to", "and", "or", "did", "does", "how", "why",
@@ -361,14 +391,15 @@ class QueryNormalizer:
             if wiki_aliases:
                 expansions.extend(wiki_aliases)
                 sources_used.append("wikidata")
+                status_flags["wikidata_ok"] = True
                 cache_set(self.conn, entity, wiki_aliases, "wikidata")
                 name_resolved = True
 
             # ── P3: indic-transliteration ──────────────
-            # Runs on entity token only — NOT the full query
             translit = transliterate_entities([entity])
             if translit:
                 expansions.extend(translit)
+                status_flags["xlit_fallback_used"] = True
                 if "indic_transliteration" not in sources_used:
                     sources_used.append("indic_transliteration")
 
@@ -400,6 +431,7 @@ class QueryNormalizer:
             "entities"      : entities,
             "name_resolved" : name_resolved,
             "sources_used"  : sources_used,
+            "status_flags"  : status_flags,
         }
 
     def close(self):

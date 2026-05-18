@@ -1,12 +1,6 @@
 # ============================================================
 # BHAIRAV AI - FASTAPI MAIN APPLICATION
 # ============================================================
-# Run with:
-#   uvicorn main:app --reload --host 0.0.0.0 --port 8000
-#
-# API docs at:
-#   http://localhost:8000/docs
-# ============================================================
 
 import time
 from contextlib import asynccontextmanager
@@ -17,7 +11,8 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from config import EMBEDDING_MODEL, GROQ_MODEL, RERANK_TOP_N
+from config import EMBEDDING_MODEL, GROQ_MODEL, NEIGHBOR_WINDOW, RERANK_TOP_N
+from confidence import neighbors_allowed
 from generator import Generator
 from reranker import Reranker
 from retriever import Retriever
@@ -67,7 +62,6 @@ class HealthResponse(BaseModel):
     llm_model: str
 
 
-# Global instances
 retriever: Retriever = None
 reranker: Reranker = None
 generator: Generator = None
@@ -97,14 +91,13 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Bhairav AI",
     description="Multilingual RAG system for Dharmic primary sources",
-    version="2.0.0",
+    version="2.1.0",
     lifespan=lifespan,
 )
 
-# CORS - allow frontend to call the API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten this in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -115,7 +108,7 @@ app.add_middleware(
 async def root():
     return {
         "name": "Bhairav AI",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "status": "running",
         "docs": "/docs",
     }
@@ -123,9 +116,6 @@ async def root():
 
 @app.get("/health", response_model=HealthResponse, tags=["health"])
 async def health():
-    """
-    Health check - verifies all components are loaded correctly.
-    """
     if not retriever:
         raise HTTPException(status_code=503, detail="Retriever not loaded")
 
@@ -141,15 +131,6 @@ async def health():
 
 @app.post("/query", response_model=QueryResponse, tags=["query"])
 async def query(request: QueryRequest):
-    """
-    Main query endpoint.
-
-    Full pipeline:
-    1. Hybrid retrieval (FAISS + BM25 + RRF)
-    2. Cross-encoder reranking
-    3. LLM generation
-    4. Return answer + citations
-    """
     if not retriever or not reranker or not generator:
         raise HTTPException(status_code=503, detail="System not ready")
 
@@ -160,43 +141,47 @@ async def query(request: QueryRequest):
     print(f"\n--- PROFILING QUERY: '{query_text}' ---")
     start_time = time.time()
 
-    # Step 1: Hybrid retrieval
     t0 = time.time()
-    candidates, faiss_query, bm25_query, detected_domains = await run_in_threadpool(
-        retriever.retrieve, query_text, request.top_k or 20
+    candidates, faiss_query, bm25_query, detected_domains, retrieval_meta = (
+        await run_in_threadpool(
+            retriever.retrieve, query_text, request.top_k or 40
+        )
     )
     t_retrieve = time.time() - t0
     print(f"1. Retrieval & APIs took : {t_retrieve:.2f} seconds")
+    print(
+        f"   FAISS confidence     : band={retrieval_meta.get('confidence_band')} "
+        f"top1={retrieval_meta.get('faiss_top1_score')} "
+        f"margin={retrieval_meta.get('faiss_margin')}"
+    )
 
     if not candidates:
         raise HTTPException(status_code=404, detail="No relevant chunks found")
 
-    # Step 2: Rerank
     t0 = time.time()
     script = "devanagari" if any("\u0900" <= c <= "\u097F" for c in query_text) else "english"
+    top_k = request.top_k or RERANK_TOP_N
     top_chunks = await run_in_threadpool(
         reranker.rerank,
         query_text,
         candidates,
-        top_n=request.top_k or RERANK_TOP_N,
-        script=script,
+        top_k,
+        script,
+        retrieval_meta,
     )
 
-    # Step 2.5: Expand neighbors after rerank
-    reranked_ids = [(c["id"], c.get("rerank_score", 1.0)) for c in top_chunks]
-    expanded_chunks = retriever.get_neighbor_chunks(reranked_ids, window=1)
-
-    seen = set()
-    final_chunks = []
-    for c in expanded_chunks:
-        if c["id"] not in seen:
-            final_chunks.append(c)
-            seen.add(c["id"])
+    if neighbors_allowed(retrieval_meta.get("confidence_band", "low")):
+        final_chunks = await run_in_threadpool(
+            retriever.append_neighbor_chunks,
+            top_chunks,
+            NEIGHBOR_WINDOW,
+        )
+    else:
+        final_chunks = top_chunks
 
     t_rerank = time.time() - t0
     print(f"2. Reranker (BGE-M3) took: {t_rerank:.2f} seconds")
 
-    # Step 3: LLM generation
     t0 = time.time()
     aggregated_chunks = final_chunks[:15]
     answer, citations = await run_in_threadpool(
@@ -205,7 +190,6 @@ async def query(request: QueryRequest):
     t_gen = time.time() - t0
     print(f"3. LLM generation took  : {t_gen:.2f} seconds")
 
-    # Step 4: Build response
     elapsed = round(time.time() - start_time, 2)
     print(f"TOTAL TIME: {elapsed} seconds\n")
 
