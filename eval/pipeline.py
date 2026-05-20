@@ -9,7 +9,7 @@ import time
 from typing import List, Literal, Tuple
 
 from config import NEIGHBOR_WINDOW, RERANK_TOP_N
-from confidence import neighbors_allowed
+from query_plan import build_query_plan, neighbors_enabled
 
 Stage = Literal["after_retrieve", "after_rerank", "after_neighbors"]
 
@@ -46,11 +46,15 @@ def retrieve_ids(
     """
     Returns ordered chunk IDs at the chosen pipeline stage + instrumentation meta.
     """
+    plan = build_query_plan(query)
+    if plan.skip_pipeline:
+        return [], {"intent": "chitchat", "skipped": True}
+
     retriever, reranker = load_components()
 
     t0 = time.time()
     candidates, faiss_q, bm25_q, domains, retrieval_meta = retriever.retrieve(
-        query, top_k=top_k
+        query, top_k=top_k, plan=plan
     )
     latency_retrieve_ms = int((time.time() - t0) * 1000)
 
@@ -89,7 +93,9 @@ def retrieve_ids(
         return [c["id"] for c in top_chunks], meta
 
     # after_neighbors — diagnostic only; append neighbors after reranked hits
-    if neighbors_allowed(retrieval_meta.get("confidence_band", "low")):
+    band = retrieval_meta.get("confidence_band", "low")
+    plan = retrieval_meta.get("plan", plan)
+    if neighbors_enabled(plan, band):
         expanded = retriever.append_neighbor_chunks(top_chunks, window=NEIGHBOR_WINDOW)
         meta["neighbors_used"] = True
     else:

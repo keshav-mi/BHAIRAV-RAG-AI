@@ -28,7 +28,7 @@ class Reranker:
             return []
 
         meta = retrieval_meta or {}
-        if meta.get("skip_rerank"):
+        if meta.get("rerank_policy") == "skip" or meta.get("skip_rerank"):
             print("   Reranker skipped (high FAISS confidence)")
             for i, c in enumerate(chunks[:top_n]):
                 c["rerank_score"] = c.get("score", 1.0 - i * 0.01)

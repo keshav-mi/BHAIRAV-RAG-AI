@@ -35,11 +35,11 @@ RRF_K        = 60     # standard RRF constant
 RERANKER_MODEL        = "BAAI/bge-reranker-v2-m3"  # Multilingual support
 RERANK_SCORE_FLOOR    = 0.3                       # Adjusted for BGE scoring
 
-# Adaptive rerank gate (FAISS inner product, not RRF)
+# Adaptive rerank gate (FAISS inner product, not RRF) — plan v3 §1.4
 RERANK_GATE_ENABLED      = os.getenv("RERANK_GATE_ENABLED", "true").lower() == "true"
-RERANK_GATE_SCORE_HIGH   = float(os.getenv("RERANK_GATE_SCORE_HIGH", "0.75"))
-RERANK_GATE_SCORE_MED    = float(os.getenv("RERANK_GATE_SCORE_MED", "0.55"))
-RERANK_GATE_MARGIN_THR   = float(os.getenv("RERANK_GATE_MARGIN_THR", "0.05"))
+RERANK_GATE_SCORE_HIGH   = float(os.getenv("RERANK_GATE_SCORE_HIGH", "0.85"))
+RERANK_GATE_SCORE_MED    = float(os.getenv("RERANK_GATE_SCORE_MED", "0.60"))
+RERANK_GATE_MARGIN_THR   = float(os.getenv("RERANK_GATE_MARGIN_THR", "0.20"))
 RERANK_TOPN_HIGH         = 0    # skip rerank
 RERANK_TOPN_MEDIUM       = int(os.getenv("RERANK_TOPN_MEDIUM", "8"))
 RERANK_TOPN_LOW          = int(os.getenv("RERANK_TOPN_LOW", "15"))
@@ -47,14 +47,18 @@ RERANK_TOPN_LOW          = int(os.getenv("RERANK_TOPN_LOW", "15"))
 # Harvested entity maps (see data/README.md)
 REQUIRE_HARVESTED_MAPS = os.getenv("REQUIRE_HARVESTED_MAPS", "false").lower() == "true"
 
-# Offline / eval API policy
-MW_NETWORK_ENABLED   = os.getenv("MW_NETWORK_ENABLED", "true").lower() == "true"
+# Offline / eval API policy (plan v3 §2.5 — local MW + optional enrichment)
+MW_NETWORK_ENABLED   = os.getenv("MW_NETWORK_ENABLED", "false").lower() == "true"
 WIKIDATA_ENABLED     = os.getenv("WIKIDATA_ENABLED", "true").lower() == "true"
+GEMINI_ENTITY_ENABLED = os.getenv("GEMINI_ENTITY_ENABLED", "true").lower() == "true"
+INDIC_NLP_FIRSTPASS  = os.getenv("INDIC_NLP_FIRSTPASS", "true").lower() == "true"
 INDICXLIT_FALLBACK   = os.getenv("INDICXLIT_FALLBACK", "true").lower() == "true"
 INDICXLIT_TIMEOUT_SEC = float(os.getenv("INDICXLIT_TIMEOUT_SEC", "1.0"))
+XLIT_VALIDATION_THRESHOLD = float(os.getenv("XLIT_VALIDATION_THRESHOLD", "0.8"))
+ENTITY_FUZZY_THRESHOLD = int(os.getenv("ENTITY_FUZZY_THRESHOLD", "85"))
 
-# Intent routing (Sprint 3)
-INTENT_ROUTER_ENABLED = os.getenv("INTENT_ROUTER_ENABLED", "false").lower() == "true"
+# Intent routing (Sprint 1)
+INTENT_ROUTER_ENABLED = os.getenv("INTENT_ROUTER_ENABLED", "true").lower() == "true"
 
 # Neighbor expansion for generation context only
 NEIGHBOR_WINDOW = int(os.getenv("NEIGHBOR_WINDOW", "1"))
@@ -70,7 +74,7 @@ GEMINI_API_KEY   = os.getenv("GEMINI_API_KEY", "")
 
 # ── Groq / LLM ─────────────────────────────────────────────
 GROQ_API_KEY     = os.getenv("GROQ_API_KEY", "")
-GROQ_MODEL       = "llama-3.1-8b-instant"
+GROQ_MODEL       = "llama-3.3-70b-versatile"
 GROQ_MAX_TOKENS  = 1024
 GROQ_TEMPERATURE = 0.2   # slightly lower → more faithful to context
 

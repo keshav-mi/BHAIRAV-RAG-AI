@@ -1,61 +1,53 @@
-import re
+"""Intent-aware FAISS query variants (Sprint 1)."""
 
-# Query intent detection
+from __future__ import annotations
+
+from typing import List
+
+# Legacy triggers kept for backward-compatible detect_intent()
 CAUSAL_TRIGGERS = {
-    "why", "kyon", "cause", "reason", "karan", "how", "kaise", 
-    "why did", "kyun", "kya wajah", "kya karan"
+    "why", "kyon", "cause", "reason", "karan", "how", "kaise",
+    "why did", "kyun", "kya wajah", "kya karan",
 }
 FACTUAL_TRIGGERS = {
     "who", "kaun", "what", "kya", "when", "kab", "where", "kahan",
-    "which", "kon", "kis", "whom", "kisne"
+    "which", "kon", "kis", "whom", "kisne",
 }
 
+
 def detect_intent(query: str) -> str:
-    """
-    Detect if query is asking for CAUSE, FACTS, or DESCRIPTION.
-    Returns: "causal", "factual", or "descriptive"
-    """
-    query_lower = query.lower()
-    words = set(query_lower.split())
-    
-    # Check for explicit triggers first
-    if any(trigger in query_lower for trigger in CAUSAL_TRIGGERS):
-        return "causal"
-    
-    if any(trigger in query_lower for trigger in FACTUAL_TRIGGERS):
+    """Delegate to query_classifier for consistent labels."""
+    from query_classifier import classify_query
+
+    clf = classify_query(query)
+    if clf.intent == "chitchat":
+        return "chitchat"
+    if clf.intent in ("factoid", "lexical"):
         return "factual"
-    
+    if clf.intent == "causal":
+        return "causal"
     return "descriptive"
 
 
-def generate_query_variants(base_query: str) -> list[str]:
+def generate_query_variants(base_query: str, intent: str | None = None) -> list[str]:
     """
-    Generate semantic variants based on query intent.
-    
-    CAUSAL queries: 3 variants (base + cause + history)
-    FACTUAL queries: 2 variants (base + context)
-    DESCRIPTIVE: 1 variant (base only)
-    
-    This replaces the old dumb keyword appending.
+    Semantic variants by intent (plan §1.3 / legacy multi_query).
     """
     q = base_query.strip()
-    intent = detect_intent(q)
-    
-    if intent == "causal":
-        # WHY/HOW queries need cause + backstory variants
+    if intent is None:
+        intent = detect_intent(q)
+
+    if intent in ("causal",):
         return [
             q,
             q + " cause reason wajah karan motivation",
             q + " history background event backstory shraap",
         ]
-    
-    elif intent == "factual":
-        # WHO/WHAT queries need context but not as much noise
-        return [
-            q,
-            q + " description detail story role",
-        ]
-    
-    else:
-        # Descriptive queries — no variants needed
-        return [q]
+
+    if intent in ("factual", "factoid", "lexical"):
+        return [q, q + " description detail story role"]
+
+    if intent in ("philosophical", "narrative"):
+        return [q, q + " essence meaning context pramana"]
+
+    return [q]

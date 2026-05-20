@@ -25,7 +25,8 @@ from google.genai import types
 from indic_transliteration import sanscript
 from indic_transliteration.sanscript import transliterate
 
-from config import BASE_DIR, MW_NETWORK_ENABLED, WIKIDATA_ENABLED
+from config import BASE_DIR, GEMINI_ENTITY_ENABLED, MW_NETWORK_ENABLED, WIKIDATA_ENABLED
+from entity_resolver import get_resolver
 
 logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────
@@ -105,13 +106,22 @@ def extract_entities_gemini(query: str, client: genai.Client) -> list[str]:
     """Uses Gemini to extract entity name tokens from any language query."""
     try:
         prompt = GEMINI_PROMPT.format(query=query)
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(
+        try:
+            gen_config = types.GenerateContentConfig(
+                temperature=0.0,
+                max_output_tokens=100,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+            )
+        except (TypeError, AttributeError):
+            gen_config = types.GenerateContentConfig(
                 temperature=0.0,
                 max_output_tokens=100,
             )
+
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=gen_config,
         )
 
         if not response.text:
@@ -347,7 +357,7 @@ class QueryNormalizer:
         self.conn   = init_db(db_path)
         self.gemini = _init_gemini()
 
-    def normalize(self, raw_query: str) -> dict:
+    def normalize(self, raw_query: str, offline_first: bool = True) -> dict:
         """
         Returns:
         {
@@ -359,23 +369,50 @@ class QueryNormalizer:
             "sources_used"  : list[str]
         }
         """
-        query         = raw_query.strip()
-        expansions    = []
-        sources_used  = []
+        query = raw_query.strip()
+        expansions: list[str] = []
+        sources_used: list[str] = []
+        status_flags: dict = {}
         name_resolved = False
+        resolver = get_resolver()
 
-        # ── G0: Gemini Entity Extraction ──────────────
-        entities = []
-        if self.gemini:
+        # ── G0: Gemini Entity Extraction (enrichment; non-blocking) ──
+        entities: list[str] = []
+        if self.gemini and GEMINI_ENTITY_ENABLED and not offline_first:
             entities = extract_entities_gemini(query, self.gemini)
             if entities:
+                status_flags["gemini_ok"] = True
                 logger.info(f"Gemini extracted entities: {entities}")
+        elif self.gemini and GEMINI_ENTITY_ENABLED:
+            try:
+                entities = extract_entities_gemini(query, self.gemini)
+                if entities:
+                    status_flags["gemini_ok"] = True
+            except Exception:
+                entities = []
 
-        # Fallback: if Gemini found nothing, treat full query as the token
-        # Handles single-word queries like "Bhishma", "Krishna"
+        if not entities:
+            entities = offline_extract_entities(query)
+
         search_tokens = entities if entities else [query]
 
         for entity in search_tokens:
+            # ── P0: Offline entity map (primary) ─────────
+            resolved = resolver.resolve(entity)
+            if resolved:
+                expansions.extend(resolved.aliases)
+                if resolved.devanagari:
+                    expansions.append(resolved.devanagari)
+                sources_used.append(f"entity_{resolved.source}")
+                status_flags["offline_entity_used"] = True
+                name_resolved = True
+                cache_set(
+                    self.conn,
+                    entity,
+                    resolved.aliases,
+                    resolved.source,
+                )
+                continue
 
             # ── P1: SQLite Cache ───────────────────────
             cached = cache_get(self.conn, entity)
@@ -386,14 +423,16 @@ class QueryNormalizer:
                 name_resolved = True
                 continue
 
-            # ── P2: Wikidata ───────────────────────────
-            wiki_aliases, resolved = resolve_wikidata(entity)
-            if wiki_aliases:
-                expansions.extend(wiki_aliases)
-                sources_used.append("wikidata")
-                status_flags["wikidata_ok"] = True
-                cache_set(self.conn, entity, wiki_aliases, "wikidata")
-                name_resolved = True
+            # ── P2: Wikidata (optional enrichment) ─────
+            if WIKIDATA_ENABLED and not offline_first:
+                wiki_aliases, resolved = resolve_wikidata(entity)
+                if wiki_aliases:
+                    expansions.extend(wiki_aliases)
+                    sources_used.append("wikidata")
+                    status_flags["wikidata_ok"] = True
+                    cache_set(self.conn, entity, wiki_aliases, "wikidata")
+                    name_resolved = True
+                    continue
 
             # ── P3: indic-transliteration ──────────────
             translit = transliterate_entities([entity])
@@ -403,8 +442,7 @@ class QueryNormalizer:
                 if "indic_transliteration" not in sources_used:
                     sources_used.append("indic_transliteration")
 
-        # ── P4 Gate + Monier-Williams ──────────────────
-        # Only fires when no entity resolved AND query looks like epithet
+        # ── P4 Gate + Monier-Williams (network; optional) ─
         if not name_resolved and is_epithet_query(query):
             mw_terms = monier_williams_lookup(query)
             if mw_terms:

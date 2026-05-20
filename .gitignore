@@ -21,6 +21,10 @@ Thumbs.db
 *.sqlite
 *.sqlite3
 
+# data files 
+data/
+gitfiles.txt
+
 # Evaluation outputs and generated reports
 eval_outputs/
 eval/results/

@@ -22,16 +22,14 @@ from config import (
     FAISS_TOP_K,
     GROQ_API_KEY,
     ID_MAP_PATH,
-    INTENT_ROUTER_ENABLED,
     METADATA_PATH,
     RRF_K,
     YAJURVEDA_DOMAIN_BOOST,
 )
-from multi_query import generate_query_variants
 from mw_grounding import NonEntityGrounder
 from query_expander import expand_query
 from query_normalizer import QueryNormalizer
-from query_plan import build_query_plan, faiss_variants_for_plan
+from query_plan import QueryPlan, apply_confidence_to_plan, build_query_plan, faiss_variants_for_plan
 
 try:
     from config import MW_INDEX_PATH
@@ -81,9 +79,8 @@ class Retriever:
         print(f"Retriever ready - {len(self.metadata):,} chunks")
 
     def embed_query(self, query: str) -> np.ndarray:
-        prefixed = f"Meaning: {query.strip()}"
         vec = self.embed_model.encode(
-            [prefixed],
+            [query.strip()],
             normalize_embeddings=True,
             convert_to_numpy=True,
             show_progress_bar=False,
@@ -91,7 +88,7 @@ class Retriever:
         return vec.astype(np.float32)
 
     def embed_queries_batch(self, queries: List[str]) -> np.ndarray:
-        prefixed = [f"Meaning: {q.strip()}" for q in queries]
+        prefixed = [q.strip() for q in queries]
         vecs = self.embed_model.encode(
             prefixed,
             normalize_embeddings=True,
@@ -191,8 +188,17 @@ class Retriever:
 
         return result
 
-    def retrieve(self, query: str, top_k: int = FAISS_TOP_K):
-        norm = self.normalizer.normalize(query)
+    def retrieve(
+        self,
+        query: str,
+        top_k: int = FAISS_TOP_K,
+        plan: QueryPlan | None = None,
+    ):
+        plan = plan or build_query_plan(query)
+        faiss_k = plan.faiss_k if plan.faiss_k else top_k
+        bm25_k = plan.bm25_k if plan.bm25_k else top_k
+
+        norm = self.normalizer.normalize(query, offline_first=True)
 
         mw = self.mw_grounder.ground(query, norm["entities"])
         if mw["sources_used"]:
@@ -210,24 +216,18 @@ class Retriever:
         ]
         bm25_query = " ".join(dict.fromkeys(valid_tokens))
 
-        if INTENT_ROUTER_ENABLED:
-            plan = build_query_plan(faiss_query)
-            top_k = plan.faiss_top_k
-            variants = faiss_variants_for_plan(plan)
-        else:
-            plan = None
-            variants = generate_query_variants(faiss_query)
+        variants = faiss_variants_for_plan(plan)
 
         if len(variants) > 1:
             vecs = self.embed_queries_batch(variants)
             all_faiss_results = []
             for vec in vecs:
-                all_faiss_results.extend(self.faiss_search(vec[np.newaxis, :], top_k))
+                all_faiss_results.extend(self.faiss_search(vec[np.newaxis, :], faiss_k))
         else:
             vec = self.embed_query(variants[0])
-            all_faiss_results = self.faiss_search(vec, top_k)
+            all_faiss_results = self.faiss_search(vec, faiss_k)
 
-        all_bm25_results = self.bm25_search(bm25_query, top_k)
+        all_bm25_results = self.bm25_search(bm25_query, bm25_k)
 
         print(f"   Variants         : {len(variants)}")
         print(f"   FAISS base query : {faiss_query[:120]}...")
@@ -240,12 +240,22 @@ class Retriever:
         )
 
         conf = confidence_from_faiss(all_faiss_results)
+        if plan.rerank_policy == "skip":
+            conf["skip_rerank"] = True
+            conf["rerank_top_n"] = min(5, faiss_k)
+
+        plan = apply_confidence_to_plan(plan, conf)
         status_flags = dict(norm.get("status_flags", {}))
         status_flags["mw_sources"] = mw.get("sources_used", [])
+        status_flags.update(plan.status_flags)
 
         retrieval_meta = {
             **conf,
-            "intent": plan.intent if plan else None,
+            "intent": plan.intent,
+            "plan": plan,
+            "rerank_policy": plan.rerank_policy,
+            "neighbor_policy": plan.neighbor_policy,
+            "generation_mode": plan.generation_mode,
             "status_flags": status_flags,
             "faiss_query": faiss_query,
             "bm25_query": bm25_query,

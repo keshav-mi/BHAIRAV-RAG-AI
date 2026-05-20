@@ -16,3 +16,6 @@ numpy==1.26.4
 python-dotenv==1.0.1
 google-genai>=1.0.0
 indic-transliteration>=2.3.0
+rapidfuzz>=3.0.0
+# Optional Sprint 2 local transliteration (AI4Bharat IndicXlit — https://github.com/AI4Bharat/IndicXlit)
+ai4bharat-transliteration>=1.1.3

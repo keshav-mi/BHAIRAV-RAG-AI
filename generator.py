@@ -145,6 +145,7 @@ class Generator:
         self,
         query: str,
         chunks: List[Dict],
+        generation_mode: str = "synthesis",
     ) -> Tuple[str, List[Dict]]:
         """
         Pipeline:
@@ -158,7 +159,8 @@ class Generator:
             return self.not_found_response(query)
 
         # Cap context window — beyond 20 chunks, signal-to-noise drops
-        chunks = chunks[:20]
+        cap = 8 if generation_mode == "strict" else 20
+        chunks = chunks[:cap]
 
         citations = [self.build_citation(c) for c in chunks]
         context   = self.build_context(chunks)

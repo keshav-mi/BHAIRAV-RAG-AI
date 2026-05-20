@@ -11,9 +11,10 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from chitchat import CHITCHAT_RESPONSES
 from config import EMBEDDING_MODEL, GROQ_MODEL, NEIGHBOR_WINDOW, RERANK_TOP_N
-from confidence import neighbors_allowed
 from generator import Generator
+from query_plan import build_query_plan, neighbors_enabled
 from reranker import Reranker
 from retriever import Retriever
 
@@ -51,6 +52,8 @@ class QueryResponse(BaseModel):
     citations: List[Citation]
     retrieved_chunks: List[RetrievedChunk]
     sources_used: List[str]
+    intent: Optional[str] = None
+    confidence_band: Optional[str] = None
 
 
 class HealthResponse(BaseModel):
@@ -91,7 +94,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Bhairav AI",
     description="Multilingual RAG system for Dharmic primary sources",
-    version="2.1.0",
+    version="2.2.0",
     lifespan=lifespan,
 )
 
@@ -108,7 +111,7 @@ app.add_middleware(
 async def root():
     return {
         "name": "Bhairav AI",
-        "version": "2.1.0",
+        "version": "2.2.0",
         "status": "running",
         "docs": "/docs",
     }
@@ -138,14 +141,27 @@ async def query(request: QueryRequest):
     if not query_text:
         raise HTTPException(status_code=400, detail="Query cannot be empty")
 
-    print(f"\n--- PROFILING QUERY: '{query_text}' ---")
+    plan = build_query_plan(query_text)
+
+    if plan.skip_pipeline:
+        subtype = plan.chitchat_subtype or "fallback"
+        answer = CHITCHAT_RESPONSES.get(subtype, CHITCHAT_RESPONSES["fallback"])
+        return QueryResponse(
+            query=query_text,
+            answer=answer,
+            citations=[],
+            retrieved_chunks=[],
+            sources_used=[],
+            intent="chitchat",
+            confidence_band="high",
+        )
+
+    print(f"\n--- PROFILING QUERY: '{query_text}' | intent={plan.intent} ---")
     start_time = time.time()
 
     t0 = time.time()
     candidates, faiss_query, bm25_query, detected_domains, retrieval_meta = (
-        await run_in_threadpool(
-            retriever.retrieve, query_text, request.top_k or 40
-        )
+        await run_in_threadpool(retriever.retrieve, query_text, plan.faiss_k, plan)
     )
     t_retrieve = time.time() - t0
     print(f"1. Retrieval & APIs took : {t_retrieve:.2f} seconds")
@@ -158,19 +174,21 @@ async def query(request: QueryRequest):
     if not candidates:
         raise HTTPException(status_code=404, detail="No relevant chunks found")
 
+    plan = retrieval_meta.get("plan", plan)
     t0 = time.time()
     script = "devanagari" if any("\u0900" <= c <= "\u097F" for c in query_text) else "english"
-    top_k = request.top_k or RERANK_TOP_N
+    rerank_top_n = retrieval_meta.get("rerank_top_n", request.top_k or RERANK_TOP_N)
     top_chunks = await run_in_threadpool(
         reranker.rerank,
         query_text,
         candidates,
-        top_k,
+        rerank_top_n,
         script,
         retrieval_meta,
     )
 
-    if neighbors_allowed(retrieval_meta.get("confidence_band", "low")):
+    band = retrieval_meta.get("confidence_band", "low")
+    if neighbors_enabled(plan, band):
         final_chunks = await run_in_threadpool(
             retriever.append_neighbor_chunks,
             top_chunks,
@@ -183,9 +201,13 @@ async def query(request: QueryRequest):
     print(f"2. Reranker (BGE-M3) took: {t_rerank:.2f} seconds")
 
     t0 = time.time()
-    aggregated_chunks = final_chunks[:15]
+    context_cap = 5 if plan.intent == "lexical" else 15
+    aggregated_chunks = final_chunks[:context_cap]
     answer, citations = await run_in_threadpool(
-        generator.generate, query_text, aggregated_chunks
+        generator.generate,
+        query_text,
+        aggregated_chunks,
+        plan.generation_mode,
     )
     t_gen = time.time() - t0
     print(f"3. LLM generation took  : {t_gen:.2f} seconds")
@@ -233,6 +255,8 @@ async def query(request: QueryRequest):
         citations=citation_objects,
         retrieved_chunks=retrieved_chunks,
         sources_used=sources_used,
+        intent=plan.intent,
+        confidence_band=band,
     )
 
 

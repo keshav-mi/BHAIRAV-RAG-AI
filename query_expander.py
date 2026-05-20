@@ -281,62 +281,17 @@ STOP_WORDS = {
 # LAYER 1 — IndicXlit transliteration
 # ─────────────────────────────────────────────────────────────
 
-def transliterate_word(word: str) -> List[str]:
-    if not INDICXLIT_FALLBACK:
-        return []
-    try:
-        url = XLIT_API_URL.format(word=word.lower())
-        timeout = min(XLIT_TIMEOUT, INDICXLIT_TIMEOUT_SEC)
-        resp = requests.get(url, timeout=timeout)
-        if resp.status_code == 200:
-            data = resp.json()
-            candidates = data.get("output", [{}])[0].get("inDataList", [])
-            return candidates[:XLIT_TOP_K]
-    except Exception:
-        pass
-    return []
-
-
 def transliterate_query(query: str) -> Tuple[str, List[str]]:
     """
-    Transliterate romanized words → Devanagari.
-    Returns (expanded_query, list_of_devanagari_tokens).
-    Original query is always preserved.
+    Layered transliteration (entity map → HK → ai4bharat → API).
+    Returns (expanded_query, list_of_devanagari_tokens). Original preserved.
     """
-    words = query.split()
-    devanagari_found: List[str] = []
+    from transliteration import transliterate_query_tokens
 
-    for word in words:
-
-        # Already Devanagari
-        if has_devanagari(word):
-            devanagari_found.append(word)
-            continue
-
-        clean = re.sub(r'[^\w]', '', word).lower()
-
-        if len(clean) <= 2 or clean in STOP_WORDS:
-            continue
-
-        # ── Harvested map / seed ─────────────────────────
-        if clean in ENGLISH_ENTITY_MAP:
-            devanagari_found.append(ENGLISH_ENTITY_MAP[clean])
-            continue
-
-        # ── HK / ITRANS (deterministic, entity tokens only) ─
-        hk_deva = transliterate_roman_token(clean)
-        if hk_deva:
-            devanagari_found.append(hk_deva)
-            continue
-
-        # ── IndicXlit fallback ───────────────────────────
-        candidates = transliterate_word(clean)
-        devanagari_found.extend(candidates)
-
+    devanagari_found, xlit_flags = transliterate_query_tokens(query, STOP_WORDS)
     if devanagari_found:
         expanded = query + " " + " ".join(devanagari_found)
         return expanded, devanagari_found
-
     return query, []
 
 # ─────────────────────────────────────────────────────────────

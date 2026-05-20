@@ -16,6 +16,21 @@ Private multilingual Dharmic RAG system (Hindi/English/Hinglish) built with Fast
    - `pip install -r requirements-eval.txt` (for eval pipeline)
 3. Add `.env` with required API keys (not committed)
 
+## Plan v3 (through Sprint 3)
+
+Intent router, chitchat guard, layered transliteration, offline entity resolver, and maintenance scripts. See `data/README.md`.
+
+**Offline eval baseline:**
+```bash
+set MW_NETWORK_ENABLED=false
+set WIKIDATA_ENABLED=false
+set INDICXLIT_FALLBACK=false
+python -m eval.bhairav_retrieval_eval --stage after_rerank
+```
+
+Optional: `pip install ai4bharat-transliteration` ([AI4Bharat IndicXlit](https://github.com/AI4Bharat/IndicXlit)).
+
 ## Run API
 ```bash
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
