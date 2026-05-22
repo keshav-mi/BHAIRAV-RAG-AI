@@ -1,0 +1,9 @@
+{
+  "chitchat": {"faiss_k": 0, "bm25_k": 0, "rerank": "skip", "neighbors": "none", "generation_mode": "redirect"},
+  "factoid": {"faiss_k": 20, "bm25_k": 20, "rerank": "gate", "neighbors": "none", "generation_mode": "strict"},
+  "causal": {"faiss_k": 30, "bm25_k": 30, "rerank": "top15", "neighbors": "medium", "generation_mode": "synthesis"},
+  "philosophical": {"faiss_k": 40, "bm25_k": 40, "rerank": "top15", "neighbors": "post_rerank", "generation_mode": "synthesis"},
+  "narrative": {"faiss_k": 30, "bm25_k": 30, "rerank": "gate", "neighbors": "post_rerank", "generation_mode": "synthesis"},
+  "lexical": {"faiss_k": 15, "bm25_k": 15, "rerank": "skip", "neighbors": "none", "generation_mode": "strict"},
+  "descriptive": {"faiss_k": 30, "bm25_k": 30, "rerank": "gate", "neighbors": "post_rerank", "generation_mode": "synthesis"}
+}

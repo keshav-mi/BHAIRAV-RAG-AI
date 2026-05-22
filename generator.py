@@ -14,11 +14,19 @@
 from groq import Groq
 from typing import List, Dict, Tuple
 
-from config import (
-    GROQ_API_KEY, GROQ_MODEL, GROQ_MAX_TOKENS,
-    GROQ_TEMPERATURE, SYSTEM_PROMPT,
-)
+from bhairav_data import load_prompt_optional
 from canonical_maps import get_canonical_book, format_citation
+from config import (
+    GROQ_API_KEY,
+    GROQ_MODEL,
+    GROQ_MAX_TOKENS,
+    GROQ_TEMPERATURE,
+    SYSTEM_PROMPT,
+)
+
+
+def _system_prompt() -> str:
+    return load_prompt_optional("system_synthesis", SYSTEM_PROMPT)
 
 
 class Generator:
@@ -26,7 +34,7 @@ class Generator:
         if not GROQ_API_KEY:
             raise ValueError("GROQ_API_KEY is not set.")
         self.client = Groq(api_key=GROQ_API_KEY)
-        print(f"✅ Generator ready — model: {GROQ_MODEL}")
+        print(f"Generator ready - model: {GROQ_MODEL}")
 
     # ──────────────────────────────────────────────────────────
     # CITATION BUILDER
@@ -169,7 +177,7 @@ class Generator:
         response = self.client.chat.completions.create(
             model=GROQ_MODEL,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": _system_prompt()},
                 {"role": "user",   "content": prompt},
             ],
             max_tokens=GROQ_MAX_TOKENS,

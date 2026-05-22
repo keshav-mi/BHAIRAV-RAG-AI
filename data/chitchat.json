@@ -1,0 +1,16 @@
+{
+  "responses": {
+    "greeting": "नमस्ते! मैं भैरव हूँ — हिंदू धर्म के प्राथमिक ग्रंथों का AI सहायक। महाभारत, रामायण, वेद, या भगवद्गीता से कोई प्रश्न पूछें।",
+    "identity": "मैं भैरव हूँ, एक RAG-आधारित AI जो हिंदू धार्मिक ग्रंथों — महाभारत, रामायण, ऋग्वेद, अथर्ववेद, यजुर्वेद, और भगवद्गीता — पर प्रश्नों का उत्तर देता है।",
+    "thanks": "आपका स्वागत है। कोई और प्रश्न हो तो पूछें।",
+    "farewell": "धन्यवाद। फिर मिलें।",
+    "fallback": "कृपया धार्मिक ग्रंथों से संबंधित प्रश्न पूछें।"
+  },
+  "patterns": {
+    "greeting": "^(hi|hello|hey|namaste|namaskar|नमस्ते|नमस्कार|hii+)\\b",
+    "identity": "(who are you|what are you|tum kaun|aap kaun|आप कौन|तुम कौन|introduce yourself)",
+    "thanks": "^(thanks|thank you|dhanyavad|धन्यवाद|शुक्रिया)\\b",
+    "farewell": "^(bye|goodbye|alvida|फिर मिलेंगे)\\b",
+    "chitchat_only": "^(hi|hello|hey|thanks|thank you|bye|namaste|नमस्ते|धन्यवाद)\\s*[!.?]*$"
+  }
+}

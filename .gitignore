@@ -1,44 +1,91 @@
-# Secrets
-.env
+# =============================================================
+# BHAIRAV AI — .gitignore
+# =============================================================
 
-# Python cache and bytecode
+# ── SECRETS (NEVER commit) ───────────────────────────────────
+.env
+*.pem
+*.key
+*_credentials.json
+service_account*.json
+
+# ── PYTHON ───────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyo
+*.pyd
+.Python
 
-# Virtual environments
+# ── VIRTUAL ENVIRONMENTS ─────────────────────────────────────
 .venv/
 venv/
 env/
+ENV/
+.conda/
 
-# Editor/OS
-.vscode/
-.DS_Store
-Thumbs.db
+# ── INDEXES (large binary/generated files — 750MB total) ─────
+indexes/
+indexes.zip
+*.index
+*.pkl
+*.faiss
 
-# Local databases and runtime artifacts
+# ── MONIER-WILLIAMS XML (64MB raw source) ────────────────────
+mw.xml
+
+# ── RUNTIME DATABASES ────────────────────────────────────────
 *.db
 *.sqlite
 *.sqlite3
+entity_cache.db
+retriever_cache.db
 
-# data files 
-data/
-gitfiles.txt
+# ── DATA DIRECTORY (large JSON maps) ─────────────────────────
+# Committed: data/query_variants.json, routing_policies.json,
+#            intent_patterns.json, domain_signals.json, chitchat.json
+# Ignored: large harvested maps (3-7MB each)
+data/entity_map_clean.json
+data/entity_map_seed.json
+data/entity_graph.json
+data/epithet_map.json
+data/mw_index.json
 
-# Evaluation outputs and generated reports
-eval_outputs/
+# ── EVAL OUTPUTS (generated results, not source) ─────────────
 eval/results/
-rag test/eval_results/
+eval_outputs/
+eval/data/chunk_manifest.json
 
-# Model/index artifacts (large generated files)
-indexes/
-indexes.zip
-*.zip
+# ── EDITOR & OS ──────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
 
-# Logs and temporary files
+# ── LOGS & TEMP ──────────────────────────────────────────────
 *.log
 *.tmp
 *.temp
 *.bak
 *.orig
 *.rej
+logs/
+
+# ── RUST / VIDYUT BUILD ARTIFACTS ────────────────────────────
+# Keep Vidyut source — ignore only compiled output
+vidyut/target/
+vidyut/bindings-python/target/
+vidyut/bindings-python/*.so
+vidyut/bindings-python/*.pyd
+vidyut/bindings-python/vidyut_python.egg-info/
+vidyut/bindings-python/.venv/
+**/*.rlib
+**/*.rmeta
+
+# ── MISC ─────────────────────────────────────────────────────
+*.zip
+gitfiles.txt
+*.orig

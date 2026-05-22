@@ -1,0 +1,32 @@
+{
+  "factoid": {
+    "templates": ["{query}"]
+  },
+  "factual": {
+    "templates": ["{query}"]
+  },
+  "causal": {
+    "templates": [
+      "{query}",
+      "{query} iska karan aur parishthiti kya thi"
+    ]
+  },
+  "philosophical": {
+    "templates": [
+      "{query}",
+      "{query} ka adhyatmik arth aur tattvagyan"
+    ]
+  },
+  "narrative": {
+    "templates": [
+      "{query}",
+      "{query} ki poori katha aur prasang"
+    ]
+  },
+  "descriptive": {
+    "templates": [
+      "{query}",
+      "{query} ka varnan aur sandarbh"
+    ]
+  }
+}

@@ -22,15 +22,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from bhairav_data import get_stopwords
 from config import DATA_DIR
 from entity_resolver import EntityResolver
 
-STOP = {
-    "who", "what", "when", "where", "why", "how", "which", "the", "a", "an",
-    "is", "was", "were", "are", "did", "does", "do", "in", "on", "at", "to",
-    "for", "of", "and", "or", "ka", "ki", "ke", "ko", "kya", "hai", "tha",
-    "about", "tell", "me", "story", "kyon", "kab", "kahan",
-}
+STOP = get_stopwords()
 
 
 def extract_roman_tokens(query: str) -> list[str]:

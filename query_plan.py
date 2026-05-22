@@ -1,24 +1,14 @@
-# Query intent routing and per-query plan (Sprint 1).
+# Query intent routing — policies from data/routing_policies.json
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import List
 
+from bhairav_data import get_routing_policies
 from config import INTENT_ROUTER_ENABLED
 from multi_query import generate_query_variants
-from query_classifier import QueryClassification, classify_query
-
-# Retrieval policies from BHAIRAV_PLAN_V3 §1.3
-_INTENT_POLICIES = {
-    "chitchat": dict(faiss_k=0, bm25_k=0, rerank="skip", neighbors="none", gen="redirect"),
-    "factoid": dict(faiss_k=20, bm25_k=20, rerank="gate", neighbors="none", gen="strict"),
-    "causal": dict(faiss_k=30, bm25_k=30, rerank="top15", neighbors="medium", gen="synthesis"),
-    "philosophical": dict(faiss_k=40, bm25_k=40, rerank="top15", neighbors="post_rerank", gen="synthesis"),
-    "narrative": dict(faiss_k=30, bm25_k=30, rerank="gate", neighbors="post_rerank", gen="synthesis"),
-    "lexical": dict(faiss_k=15, bm25_k=15, rerank="skip", neighbors="none", gen="strict"),
-    "descriptive": dict(faiss_k=30, bm25_k=30, rerank="gate", neighbors="post_rerank", gen="synthesis"),
-}
+from query_classifier import classify_query
 
 
 @dataclass
@@ -31,12 +21,17 @@ class QueryPlan:
     confidence_band: str = "medium"
     faiss_k: int = 40
     bm25_k: int = 40
-    rerank_policy: str = "top15"  # skip | gate | top8 | top15
+    rerank_policy: str = "top15"
     rerank_top_n: int = 15
-    neighbor_policy: str = "post_rerank"  # none | post_rerank | medium
-    generation_mode: str = "synthesis"  # redirect | strict | synthesis | conservative
+    neighbor_policy: str = "post_rerank"
+    generation_mode: str = "synthesis"
     status_flags: dict = field(default_factory=dict)
     skip_pipeline: bool = False
+
+
+def _policy(intent: str) -> dict:
+    policies = get_routing_policies()
+    return policies.get(intent, policies.get("descriptive", {}))
 
 
 def build_query_plan(
@@ -50,8 +45,6 @@ def build_query_plan(
     flags = dict(status_flags or {})
     flags["language"] = clf.language
     flags["script_detected"] = clf.script
-
-    policy = _INTENT_POLICIES.get(clf.intent, _INTENT_POLICIES["descriptive"])
 
     if clf.intent == "chitchat":
         return QueryPlan(
@@ -69,10 +62,12 @@ def build_query_plan(
             skip_pipeline=True,
         )
 
-    faiss_k = policy["faiss_k"]
-    bm25_k = policy["bm25_k"]
-    rerank_pol = rerank_policy or policy["rerank"]
-    neighbors = policy["neighbors"]
+    pol = _policy(clf.intent)
+    faiss_k = pol.get("faiss_k", 40)
+    bm25_k = pol.get("bm25_k", 40)
+    rerank_pol = rerank_policy or pol.get("rerank", "gate")
+    neighbors = pol.get("neighbors", "post_rerank")
+    gen_mode = pol.get("generation_mode", "synthesis")
 
     if confidence_band == "high" and neighbors == "post_rerank":
         neighbors = "none"
@@ -93,13 +88,12 @@ def build_query_plan(
         rerank_policy=rerank_pol,
         rerank_top_n=rerank_top_n,
         neighbor_policy=neighbors,
-        generation_mode=policy["gen"],
+        generation_mode=gen_mode,
         status_flags=flags,
     )
 
 
 def apply_confidence_to_plan(plan: QueryPlan, retrieval_meta: dict) -> QueryPlan:
-    """Merge FAISS confidence gate into plan after retrieval."""
     band = retrieval_meta.get("confidence_band", plan.confidence_band)
     plan.confidence_band = band
     plan.rerank_top_n = retrieval_meta.get("rerank_top_n", plan.rerank_top_n)

@@ -1,53 +1,24 @@
-"""Intent-aware FAISS query variants (Sprint 1)."""
-
+"""Intent-aware FAISS query variants — templates from data/query_variants.json."""
 from __future__ import annotations
-
 from typing import List
-
-# Legacy triggers kept for backward-compatible detect_intent()
-CAUSAL_TRIGGERS = {
-    "why", "kyon", "cause", "reason", "karan", "how", "kaise",
-    "why did", "kyun", "kya wajah", "kya karan",
-}
-FACTUAL_TRIGGERS = {
-    "who", "kaun", "what", "kya", "when", "kab", "where", "kahan",
-    "which", "kon", "kis", "whom", "kisne",
-}
+from bhairav_data import get_query_variants
+from query_classifier import classify_query
 
 
-def detect_intent(query: str) -> str:
-    """Delegate to query_classifier for consistent labels."""
-    from query_classifier import classify_query
-
-    clf = classify_query(query)
-    if clf.intent == "chitchat":
-        return "chitchat"
-    if clf.intent in ("factoid", "lexical"):
-        return "factual"
-    if clf.intent == "causal":
-        return "causal"
-    return "descriptive"
-
-
-def generate_query_variants(base_query: str, intent: str | None = None) -> list[str]:
-    """
-    Semantic variants by intent (plan §1.3 / legacy multi_query).
-    """
+def generate_query_variants(base_query: str, intent: str | None = None) -> List[str]:
     q = base_query.strip()
     if intent is None:
-        intent = detect_intent(q)
+        intent = classify_query(q).intent
 
-    if intent in ("causal",):
-        return [
-            q,
-            q + " cause reason wajah karan motivation",
-            q + " history background event backstory shraap",
-        ]
+    cfg = get_query_variants()
+    block = cfg.get(intent) or cfg.get("descriptive")
+    if not block:
+        return [q]
 
-    if intent in ("factual", "factoid", "lexical"):
-        return [q, q + " description detail story role"]
-
-    if intent in ("philosophical", "narrative"):
-        return [q, q + " essence meaning context pramana"]
-
-    return [q]
+    templates = block.get("templates", ["{query}"])
+    seen = []
+    for t in templates:
+        variant = t.replace("{query}", q)
+        if variant not in seen:
+            seen.append(variant)
+    return seen

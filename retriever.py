@@ -5,6 +5,7 @@
 
 import json
 import pickle
+import time
 from typing import Dict, List, Tuple
 
 import faiss
@@ -23,6 +24,7 @@ from config import (
     GROQ_API_KEY,
     ID_MAP_PATH,
     METADATA_PATH,
+    PROFILE_RETRIEVAL,
     RRF_K,
     YAJURVEDA_DOMAIN_BOOST,
 )
@@ -65,7 +67,7 @@ class Retriever:
         with open(ID_MAP_PATH, "r", encoding="utf-8") as f:
             self.id_map = json.load(f)
 
-        self.chunk_ids = [self.id_map[k] for k in sorted(self.id_map.keys(), key=int)]
+        self.chunk_ids = [self.id_map[k] for k in sorted((k for k in self.id_map.keys() if k.isdigit()), key=int)]
         self.rev_id_map = {v: int(k) for k, v in self.id_map.items() if k.isdigit()}
 
         self.groq_client = Groq(api_key=GROQ_API_KEY)
@@ -109,10 +111,9 @@ class Retriever:
         tokens = query.split()
         if not tokens:
             return []
-        # Full-corpus scan — O(N); see config / plan for sparse-index future work
         scores = self.bm25.get_scores(tokens)
-        idxs = np.argsort(scores)[::-1][:top_k]
-        return [(self.chunk_ids[i], float(scores[i])) for i in idxs if scores[i] > 0]
+        top_indices = np.argsort(scores)[::-1][:top_k]
+        return [(self.chunk_ids[i], float(scores[i])) for i in top_indices if scores[i] > 0]
 
     def reciprocal_rank_fusion(self, faiss_res, bm25_res, domains, k=RRF_K):
         rrf = {}
@@ -198,26 +199,61 @@ class Retriever:
         faiss_k = plan.faiss_k if plan.faiss_k else top_k
         bm25_k = plan.bm25_k if plan.bm25_k else top_k
 
-        norm = self.normalizer.normalize(query, offline_first=True)
+        from retriever_cache import get_retriever_cache
+        cache = get_retriever_cache()
+        cached_result = cache.get(query, plan.intent)
+        if cached_result:
+            print("   [CACHE HIT] Retrieval results served from cache.")
+            meta = cached_result["retrieval_meta"]
+            meta["plan"] = plan
+            return (
+                cached_result["chunks"],
+                cached_result["faiss_query"],
+                cached_result["bm25_query"],
+                cached_result["domains"],
+                meta,
+            )
 
-        mw = self.mw_grounder.ground(query, norm["entities"])
+        prof = {} if PROFILE_RETRIEVAL else None
+        def _tick(label: str, t0: float):
+            if prof is not None:
+                prof[label] = round(time.time() - t0, 3)
+
+        t0 = time.time()
+        norm = self.normalizer.normalize(query, offline_first=True)
+        _tick("normalize", t0)
+
+        t0 = time.time()
+        # CRITICAL-2 fix: pass norm["augmented"] so the MW grounder sees the
+        # already-corrected/enriched query (e.g. "eklavya" → "एकलव्य") rather than
+        # the raw misspelled Roman input. norm["entities"] still excludes entity
+        # tokens from the non-entity grounding path.
+        mw = self.mw_grounder.ground(norm["augmented"], norm["entities"])
+        _tick("mw_ground", t0)
         if mw["sources_used"]:
             print(f"   MW sources fired : {mw['sources_used']}")
-            print(f"   MW augmented     : {mw['augmented'][:120]}")
+            safe_mw_augmented = mw['augmented'][:120].encode('ascii', 'backslashreplace').decode('ascii')
+            print(f"   MW augmented     : {safe_mw_augmented}")
 
+        t0 = time.time()
         exp_faiss, exp_bm25, domains = expand_query(query, self.groq_client)
+        _tick("expand", t0)
 
         combined_faiss = f"{norm['augmented']} {mw['augmented']} {exp_faiss}"
         faiss_query = " ".join(dict.fromkeys(combined_faiss.split()))
 
         combined_bm25 = f"{norm['augmented']} {exp_bm25}"
+        # Allow raw query tokens, normalized alias expansions, and corpus vocabulary terms
+        # (OLD: only query.split() — dropped valid entity aliases not in BM25 IDF)
+        norm_tokens = set(norm["augmented"].split())
         valid_tokens = [
-            t for t in combined_bm25.split() if t in query.split() or t in self.bm25.idf
+            t for t in combined_bm25.split() if t in norm_tokens or t in self.bm25.idf
         ]
         bm25_query = " ".join(dict.fromkeys(valid_tokens))
 
         variants = faiss_variants_for_plan(plan)
 
+        t0 = time.time()
         if len(variants) > 1:
             vecs = self.embed_queries_batch(variants)
             all_faiss_results = []
@@ -226,12 +262,20 @@ class Retriever:
         else:
             vec = self.embed_query(variants[0])
             all_faiss_results = self.faiss_search(vec, faiss_k)
+        _tick("faiss", t0)
 
+        t0 = time.time()
         all_bm25_results = self.bm25_search(bm25_query, bm25_k)
+        _tick("bm25", t0)
 
+        if prof is not None:
+            print(f"   Retrieval profile: {prof}")
+
+        safe_faiss_query = faiss_query[:120].encode('ascii', 'backslashreplace').decode('ascii')
+        safe_bm25_query = bm25_query.encode('ascii', 'backslashreplace').decode('ascii')
         print(f"   Variants         : {len(variants)}")
-        print(f"   FAISS base query : {faiss_query[:120]}...")
-        print(f"   BM25 tokens      : {bm25_query.split()}")
+        print(f"   FAISS base query : {safe_faiss_query}...")
+        print(f"   BM25 tokens      : {safe_bm25_query.split()}")
 
         ranked_ids = self.reciprocal_rank_fusion(
             all_faiss_results,
@@ -260,7 +304,19 @@ class Retriever:
             "faiss_query": faiss_query,
             "bm25_query": bm25_query,
             "domains": domains,
+            "timing_ms": {k: int(v * 1000) for k, v in prof.items()} if prof else {},
         }
 
         chunks = [dict(self.metadata[cid], score=score) for cid, score in ranked_ids]
+        
+        # Save to cache (excluding non-serializable objects like 'plan')
+        meta_to_cache = {k: v for k, v in retrieval_meta.items() if k != "plan"}
+        cache.set(query, plan.intent, {
+            "chunks": chunks,
+            "faiss_query": faiss_query,
+            "bm25_query": bm25_query,
+            "domains": domains,
+            "retrieval_meta": meta_to_cache
+        })
+        
         return chunks, faiss_query, bm25_query, domains, retrieval_meta

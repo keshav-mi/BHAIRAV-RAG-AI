@@ -25,7 +25,8 @@ from google.genai import types
 from indic_transliteration import sanscript
 from indic_transliteration.sanscript import transliterate
 
-from config import BASE_DIR, GEMINI_ENTITY_ENABLED, MW_NETWORK_ENABLED, WIKIDATA_ENABLED
+from bhairav_data import load_prompt_optional
+from config import BASE_DIR, MW_NETWORK_ENABLED, WIKIDATA_ENABLED
 from entity_resolver import get_resolver
 
 logger = logging.getLogger(__name__)
@@ -65,77 +66,6 @@ EPITHET_REGEX = re.compile("|".join(EPITHET_PATTERNS), re.IGNORECASE)
 # Gemini Setup
 # ─────────────────────────────────────────────
 
-def _init_gemini() -> Optional[genai.Client]:
-    api_key = os.getenv("GEMINI_API_KEY", "")
-    if not api_key:
-        logger.warning("GEMINI_API_KEY not set — entity extraction disabled")
-        return None
-    return genai.Client(api_key=api_key)
-
-
-# ─────────────────────────────────────────────
-# G0 — Gemini Entity Extraction
-# ─────────────────────────────────────────────
-
-GEMINI_PROMPT = """You are a named entity extractor for Dharmic/Hindu texts.
-
-Extract ONLY proper noun entity names (people, deities, sages, places, texts) from the query.
-The query can be in Hindi, English, or Hinglish (Hindi written in Latin script).
-
-Rules:
-- Return ONLY a JSON array of strings, nothing else
-- No preamble, no explanation, no markdown backticks
-- Extract names exactly as they appear in the query — do not translate or normalize
-- If no named entities exist, return []
-- Maximum 5 entities
-
-Examples:
-Query: "who was devovrath" → ["devovrath"]
-Query: "shantanu ke kitne putr the" → ["shantanu"]
-Query: "arjun aur krishna ka sambandh" → ["arjun", "krishna"]
-Query: "draupadi swayamvar mein kya hua" → ["draupadi"]
-Query: "what is dharma" → []
-Query: "शान्तनु के पुत्र कौन थे" → ["शान्तनु"]
-Query: "who took the terrible vow" → []
-Query: "ram ne ravan ko kyon mara" → ["ram", "ravan"]
-
-Query: "{query}"
-"""
-
-def extract_entities_gemini(query: str, client: genai.Client) -> list[str]:
-    """Uses Gemini to extract entity name tokens from any language query."""
-    try:
-        prompt = GEMINI_PROMPT.format(query=query)
-        try:
-            gen_config = types.GenerateContentConfig(
-                temperature=0.0,
-                max_output_tokens=100,
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
-            )
-        except (TypeError, AttributeError):
-            gen_config = types.GenerateContentConfig(
-                temperature=0.0,
-                max_output_tokens=100,
-            )
-
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-            config=gen_config,
-        )
-
-        if not response.text:
-            return []
-
-        raw = response.text.strip()
-        match = re.search(r'\[.*?\]', raw, re.DOTALL)
-        if not match:
-            return []
-        return json.loads(match.group(0))
-
-    except Exception as e:
-        logger.warning(f"Gemini entity extraction failed: {e}")
-        return []
 
 # ─────────────────────────────────────────────
 # P1 — SQLite Cache
@@ -355,7 +285,6 @@ def monier_williams_lookup(query: str) -> list[str]:
 class QueryNormalizer:
     def __init__(self, db_path: Path = DB_PATH):
         self.conn   = init_db(db_path)
-        self.gemini = _init_gemini()
 
     def normalize(self, raw_query: str, offline_first: bool = True) -> dict:
         """
@@ -368,31 +297,30 @@ class QueryNormalizer:
             "name_resolved" : bool,
             "sources_used"  : list[str]
         }
+
+        Wikidata sparsity gate (CRITICAL-3 fix):
+          Wikidata runs only when WIKIDATA_ENABLED=true AND one of:
+            a) offline_first=False  (eval / forced-enrichment mode)
+            b) offline resolution returned 0 entities  (nothing matched at all)
+            c) best offline confidence < 0.80  (fuzzy/miss — genuinely ambiguous input)
+          This avoids paying ~2-4s network latency for well-covered entities
+          (Arjuna, Krishna) while enabling enrichment for rare inputs (Ekalavya,
+          obscure Roman epithets).
         """
         query = raw_query.strip()
         expansions: list[str] = []
         sources_used: list[str] = []
         status_flags: dict = {}
         name_resolved = False
+        offline_resolution_count = 0     # tracks how many entities resolved offline
+        best_offline_confidence  = 1.0   # tracks minimum confidence across offline hits
         resolver = get_resolver()
 
-        # ── G0: Gemini Entity Extraction (enrichment; non-blocking) ──
-        entities: list[str] = []
-        if self.gemini and GEMINI_ENTITY_ENABLED and not offline_first:
-            entities = extract_entities_gemini(query, self.gemini)
-            if entities:
-                status_flags["gemini_ok"] = True
-                logger.info(f"Gemini extracted entities: {entities}")
-        elif self.gemini and GEMINI_ENTITY_ENABLED:
-            try:
-                entities = extract_entities_gemini(query, self.gemini)
-                if entities:
-                    status_flags["gemini_ok"] = True
-            except Exception:
-                entities = []
+        # Sprint 5+: Vidyut sandhi splitter will be integrated here as a compiled sidecar.
+        # Do NOT add a stub — it would set false-positive status_flags without splitting anything.
 
-        if not entities:
-            entities = offline_extract_entities(query)
+        # ── P0: Offline regex extraction ──
+        entities = offline_extract_entities(query)
 
         search_tokens = entities if entities else [query]
 
@@ -406,6 +334,8 @@ class QueryNormalizer:
                 sources_used.append(f"entity_{resolved.source}")
                 status_flags["offline_entity_used"] = True
                 name_resolved = True
+                offline_resolution_count += 1
+                best_offline_confidence = min(best_offline_confidence, resolved.confidence)
                 cache_set(
                     self.conn,
                     entity,
@@ -421,17 +351,26 @@ class QueryNormalizer:
                 expansions.extend(cached)
                 sources_used.append("sqlite_cache")
                 name_resolved = True
+                offline_resolution_count += 1
                 continue
 
-            # ── P2: Wikidata (optional enrichment) ─────
-            if WIKIDATA_ENABLED and not offline_first:
-                wiki_aliases, resolved = resolve_wikidata(entity)
+            # ── P2: Wikidata — sparsity-gated enrichment ───────────────────────
+            # Gate: run only when offline pass is sparse (< 2 resolved entities) OR
+            # confidence is low (fuzzy match), or when forced via offline_first=False.
+            # Avoids paying ~2-4s network cost for well-covered entities (Arjuna, Krishna).
+            _wikidata_sparse = (
+                offline_resolution_count < 2
+                or best_offline_confidence < 0.80
+            )
+            if WIKIDATA_ENABLED and (not offline_first or _wikidata_sparse):
+                wiki_aliases, wiki_resolved = resolve_wikidata(entity)
                 if wiki_aliases:
                     expansions.extend(wiki_aliases)
                     sources_used.append("wikidata")
                     status_flags["wikidata_ok"] = True
                     cache_set(self.conn, entity, wiki_aliases, "wikidata")
                     name_resolved = True
+                    offline_resolution_count += 1
                     continue
 
             # ── P3: indic-transliteration ──────────────

@@ -28,8 +28,7 @@ from entity_resolver import EntityResolution, get_resolver
 
 logger = logging.getLogger(__name__)
 
-_XLIT_ENGINE = None
-_XLIT_ENGINE_FAILED = False
+
 
 
 def is_valid_devanagari(text: str, threshold: float = XLIT_VALIDATION_THRESHOLD) -> bool:
@@ -43,23 +42,6 @@ def has_devanagari(text: str) -> bool:
     return any("\u0900" <= c <= "\u097F" for c in text)
 
 
-def _get_xlit_engine():
-    """Lazy-load AI4Bharat XlitEngine (pip: ai4bharat-transliteration)."""
-    global _XLIT_ENGINE, _XLIT_ENGINE_FAILED
-    if _XLIT_ENGINE_FAILED:
-        return None
-    if _XLIT_ENGINE is not None:
-        return _XLIT_ENGINE
-    try:
-        from ai4bharat.transliteration import XlitEngine
-
-        _XLIT_ENGINE = XlitEngine("hi", beam_width=4, rescore=True)
-        logger.info("ai4bharat XlitEngine loaded (hi)")
-        return _XLIT_ENGINE
-    except Exception as e:
-        logger.warning(f"ai4bharat-transliteration unavailable: {e}")
-        _XLIT_ENGINE_FAILED = True
-        return None
 
 
 def transliterate_hk(token: str) -> Optional[str]:
@@ -78,18 +60,6 @@ def transliterate_hk(token: str) -> Optional[str]:
     return None
 
 
-def transliterate_ai4bharat(token: str) -> Optional[str]:
-    engine = _get_xlit_engine()
-    if engine is None:
-        return None
-    try:
-        out = engine.translit_word(token.lower(), topk=1)
-        candidates = out.get("hi", []) if isinstance(out, dict) else []
-        if candidates and is_valid_devanagari(candidates[0]):
-            return candidates[0]
-    except Exception as e:
-        logger.debug(f"ai4bharat xlit failed for {token!r}: {e}")
-    return None
 
 
 def transliterate_api(token: str) -> List[str]:
@@ -130,10 +100,6 @@ def transliterate_token(
     hk = transliterate_hk(clean)
     if hk:
         return hk, "hk", None
-
-    ab = transliterate_ai4bharat(clean)
-    if ab:
-        return ab, "ai4bharat", None
 
     api_cands = transliterate_api(clean)
     if api_cands:

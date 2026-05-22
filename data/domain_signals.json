@@ -1,0 +1,34 @@
+{
+  "Valmiki Ramayana": [
+    "राम", "रामचंद्र", "सीता", "लक्ष्मण", "हनुमान", "रावण",
+    "कैकेयी", "दशरथ", "वनवास", "अयोध्या", "लंका", "सुग्रीव",
+    "ram", "rama", "sita", "laxman", "hanuman", "ravan",
+    "kaikeyi", "dashrath", "vanvas", "ayodhya", "lanka"
+  ],
+  "Ramcharitmanas": [
+    "तुलसीदास", "मानस", "चौपाई", "दोहा",
+    "tulsi", "tulsidas", "manas", "chaupai", "ramcharitmanas"
+  ],
+  "Mahabharata": [
+    "अर्जुन", "कृष्ण", "भीष्म", "कुरुक्षेत्र", "पांडव",
+    "कौरव", "द्रौपदी", "युधिष्ठिर", "दुर्योधन", "कर्ण",
+    "अभिमन्यु", "सौभद्र", "सुभद्रा",
+    "arjun", "arjuna", "krishna", "bhishma", "kurukshetra",
+    "pandav", "kaurav", "draupadi", "yudhishthir", "karna",
+    "abhimanyu", "saubhadra", "subhadra", "mahabharata"
+  ],
+  "Bhagavad Gita": [
+    "गीता", "कर्म योग", "भक्ति योग", "ज्ञान योग",
+    "gita", "geeta", "karma yoga", "bhakti yoga"
+  ],
+  "Rigveda": [
+    "इंद्र", "अग्नि", "सोम", "सूक्त", "मंडल",
+    "indra", "agni", "soma", "sukta", "mandala", "rigveda"
+  ],
+  "Atharvaveda": [
+    "अथर्ववेद", "काण्ड", "atharvaveda", "atharva", "kaanda"
+  ],
+  "Yajurveda": [
+    "यजुर्वेद", "यज्ञ", "वाजसेयी", "yajurveda", "yajur", "vajasaneyi"
+  ]
+}

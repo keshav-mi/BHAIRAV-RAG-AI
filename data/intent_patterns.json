@@ -1,0 +1,11 @@
+{
+  "chitchat_only": "^(hi|hello|hey|thanks|thank you|bye|namaste|नमस्ते|धन्यवाद)\\s*[!.?]*$",
+  "factoid": "\\b(who|whom|when|where|which|what year|kaun|kab|kahan|kisne|kisko)\\b|(कौन|कब|कहाँ|किसने|किसको|किन)",
+  "causal": "\\b(why|how come|because|reason|cause|kyon|kyun|kaise|kya wajah|karan)\\b|(क्यों|कैसे|कारण|वजह)",
+  "philosophical": "\\b(meaning|essence|nature|philosophy|dharma|moksha|atman|brahman)\\b|(अर्थ|तत्व|स्वरूप|क्या है|भाव|सार|तत्त्व)",
+  "narrative": "\\b(story|happened|event|describe|narrate|katha|varnan|kya hua)\\b|(कथा|वर्णन|क्या हुआ|घटना|वृत्तांत)",
+  "comparative": "\\b(compare|difference|versus|vs|between|similar|alag|antar|tulna|saman)\\b|(अंतर|तुलना|समान|vs|बीच|बनाम)",
+  "lexical": "\\b(meaning of|definition of|matlab|shabd|word mean)\\b|(शब्द|मतलब|परिभाषा|अर्थ क्या)",
+  "sanskrit_markers": "[\\u0900-\\u097F].*(ः|म्|त्व|श्र|क्ष|ज्ञ)|\\b(iti|ca|tu|eva|bhavati|asti)\\b",
+  "hinglish_markers": ["hai", "kya", "ka", "ki", "ke", "ko", "ne", "aur", "mein", "se", "kyon", "kab"]
+}

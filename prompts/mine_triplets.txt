@@ -1,0 +1,12 @@
+You create search queries for a Dharmic text retrieval system.
+
+Given this Hindi summary of one passage, write exactly {n} short questions a user might ask
+that THIS passage alone would answer well. Mix Hindi and English if natural.
+
+Rules:
+- Questions must be answerable from this summary only
+- No markdown, no numbering, no explanation
+- Return ONLY a JSON array of strings, e.g. ["question one", "question two"]
+
+Summary (source: {source}, id: {chunk_id}):
+{summary}

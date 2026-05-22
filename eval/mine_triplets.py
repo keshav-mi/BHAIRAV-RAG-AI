@@ -17,26 +17,12 @@ from pathlib import Path
 
 from groq import Groq
 
+from bhairav_data import load_prompt_optional
 from config import GROQ_API_KEY, GROQ_MODEL
 
 EVAL_DIR = Path(__file__).resolve().parent
 DEFAULT_MANIFEST = EVAL_DIR / "data" / "chunk_manifest.json"
 DEFAULT_OUT = EVAL_DIR / "data" / "triplets.jsonl"
-
-QUESTION_PROMPT = """You create search queries for a Dharmic text retrieval system.
-
-Given this Hindi summary of one passage, write exactly {n} short questions a user might ask
-that THIS passage alone would answer well. Mix Hindi and English if natural.
-
-Rules:
-- Questions must be answerable from this summary only
-- No markdown, no numbering, no explanation
-- Return ONLY a JSON array of strings, e.g. ["question one", "question two"]
-
-Summary (source: {source}, id: {chunk_id}):
-{summary}
-"""
-
 
 def parse_questions(raw: str, n: int) -> list[str]:
     raw = raw.strip()
@@ -82,7 +68,9 @@ def mine_triplets(
             summary = chunk["hindi_summary"]
             source = chunk.get("source", "")
 
-            prompt = QUESTION_PROMPT.format(
+            prompt = load_prompt_optional(
+                "mine_triplets",
+                "Summary: {summary}\n",
                 n=questions_per_chunk,
                 source=source,
                 chunk_id=cid,

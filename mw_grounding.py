@@ -53,6 +53,8 @@ from rapidfuzz import process, fuzz
 from indic_transliteration import sanscript
 from indic_transliteration.sanscript import transliterate
 
+from config import MW_FUZZY_ENABLED
+
 logger = logging.getLogger(__name__)
 
 # ── Tuning constants ────────────────────────────────────────
@@ -62,14 +64,9 @@ MIN_TOKEN_LEN        = 4    # skip very short tokens (ka, ki, ko etc.)
 MAX_MW_MEANINGS      = 3    # depth-1 cap per token
 MAX_EXPANSION_TOKENS = 8    # total tokens appended to original query
 
-_STOP_WORDS = {
-    "ka", "ki", "ke", "ko", "hai", "tha", "the", "kya", "aur",
-    "ya", "se", "me", "mein", "ne", "par", "who", "what", "why",
-    "how", "did", "was", "is", "are", "of", "the", "a", "an",
-    "in", "on", "at", "to", "for", "bete", "putra", "mata",
-    "kyon", "kaun", "kab", "kahan", "kaise", "kitna", "kitne",
-    "hain", "this", "that", "with", "from", "about", "kuch",
-}
+def _stop_words() -> set:
+    from bhairav_data import get_stopwords
+    return set(get_stopwords())
 
 _MW_STOP = {"of", "the", "a", "an", "or", "and", "by", "with", "from", "to", "in"}
 
@@ -266,7 +263,7 @@ class NonEntityGrounder:
             clean = word.lower().strip(".,?!")
             if (
                 clean not in entity_set
-                and clean not in _STOP_WORDS
+                and clean not in _stop_words()
                 and len(clean) >= MIN_TOKEN_LEN
                 and not _is_devanagari(clean)  # Devanagari already handled by QueryNormalizer
             ):
@@ -276,7 +273,9 @@ class NonEntityGrounder:
     # ── Steps 1c → 1e per token ─────────────────────────────
 
     def _process_token(self, token: str) -> dict:
-        corrected  = fuzzy_correct(token, self._vocab.vocab)
+        corrected = (
+            fuzzy_correct(token, self._vocab.vocab) if MW_FUZZY_ENABLED else None
+        )
         working    = corrected if corrected else token
         devanagari = to_devanagari(working)
         meanings   = self._mw.lookup(devanagari, working)

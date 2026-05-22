@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bhairav AI — Dharmic RAG Workspace</title>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Noto+Serif+Devanagari:wght@400;500;600;700&family=Tiro+Devanagari+Sanskrit:ital@0;1&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="app-container">
+    <!-- Top Header Bar -->
+    <header class="app-header">
+      <div class="header-logo">
+        <span class="logo-accent">BHAIRAV</span>
+        <span class="logo-sub">AI</span>
+        <span class="logo-version">v1.0.0</span>
+      </div>
+      <div class="header-status" id="system-status-indicator">
+        <span class="status-dot"></span>
+        <span class="status-text">CONNECTING TO SHASTRA...</span>
+      </div>
+    </header>
+
+    <!-- Main Grid Workspace -->
+    <main class="workspace-grid">
+      <!-- Left Sidebar: Controls & Stats -->
+      <aside class="sidebar-panel">
+        <!-- Search Input Section -->
+        <section class="panel-section">
+          <h2>QUERY THE SHASTRA</h2>
+          <form id="query-form">
+            <div class="input-wrapper">
+              <div class="input-header">
+                <span class="input-status-dot"></span>
+                <span class="input-title">QUERY CONSOLE • SHASTRA</span>
+              </div>
+              <textarea id="query-input" placeholder="Ask a question or enter Sanskrit terms (e.g., Explain the concept of Rta in Rigveda, or search for verses on Purusha)..." required></textarea>
+            </div>
+            <div class="button-row">
+              <button type="submit" id="submit-btn">
+                <span>EXPLORE</span>
+                <svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <!-- Configuration Section -->
+        <section class="panel-section settings-section">
+          <h3>SEARCH PARAMS</h3>
+          <div class="settings-grid">
+            <div class="setting-item">
+              <label for="setting-top-k">Sources Count (top_k)</label>
+              <input type="number" id="setting-top-k" min="1" max="25" value="10">
+            </div>
+            <div class="setting-item checkbox-item">
+              <input type="checkbox" id="setting-citations" checked>
+              <label for="setting-citations">Extract Citations</label>
+            </div>
+          </div>
+        </section>
+
+        <!-- History Section -->
+        <section class="panel-section history-section">
+          <h3>RECENT RESEARCH</h3>
+          <div class="history-list" id="query-history">
+            <div class="empty-history">No recent queries in this session.</div>
+          </div>
+        </section>
+
+        <!-- Health/Stats Footer -->
+        <section class="panel-section stats-section">
+          <h3>SYSTEM METRICS</h3>
+          <div class="stats-grid" id="system-stats">
+            <div class="stat-row"><span class="stat-label">FAISS Vectors</span><span class="stat-value" id="stat-vectors">—</span></div>
+            <div class="stat-row"><span class="stat-label">BM25 Chunks</span><span class="stat-value" id="stat-bm25">—</span></div>
+            <div class="stat-row"><span class="stat-label">Embedding Model</span><span class="stat-value" id="stat-emb-model">—</span></div>
+            <div class="stat-row"><span class="stat-label">LLM Core</span><span class="stat-value" id="stat-llm-model">—</span></div>
+          </div>
+        </section>
+      </aside>
+
+      <!-- Right Workspace Area -->
+      <article class="results-panel">
+        <!-- Empty/Welcome State -->
+        <div id="welcome-state" class="workspace-state active">
+          <div class="manuscript-welcome">
+            <div class="ornament">❖ ❖ ❖</div>
+            <h1>BHAIRAV RAG WORKSPACE</h1>
+            <p class="subtitle">An elegant digital library workspace linking vector search and translation maps to synthesized commentary.</p>
+            
+            <div class="feature-highlights">
+              <div class="feature-card">
+                <div class="feature-icon">ॐ</div>
+                <h3>Sandhi Resolution</h3>
+                <p>Integrates <code>Vidyut</code> parser to decompose combined Sanskrit word-forms for accurate semantic matching.</p>
+              </div>
+              <div class="feature-card">
+                <div class="feature-icon">📖</div>
+                <h3>Indic-Dict Mapping</h3>
+                <p>Maps 22,000+ classic terms from <code>indic-dict</code> directly into query analysis and semantic metadata mapping.</p>
+              </div>
+              <div class="feature-card">
+                <div class="feature-icon">⚖️</div>
+                <h3>Dual-Tier RAG</h3>
+                <p>Blends deep vectors (FAISS) with lexical anchors (BM25) over canonical Vedic and post-Vedic texts.</p>
+              </div>
+            </div>
+
+            <div class="suggested-queries">
+              <h3>Suggested Explorations</h3>
+              <div class="query-suggestions">
+                <button type="button" class="suggestion-tag">Explain the concept of Rta (cosmic order) in the Rigveda.</button>
+                <button type="button" class="suggestion-tag">What is the distinction between Atman and Brahman in the Upanishads?</button>
+                <button type="button" class="suggestion-tag">Search Mahabharata for passages mentioning Yudhishthira's righteousness.</button>
+                <button type="button" class="suggestion-tag">What is Nishkama Karma according to the Bhagavad Gita?</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Loading State -->
+        <div id="loading-state" class="workspace-state">
+          <div class="manuscript-loading-card">
+            <div class="card-header">
+              <span class="loading-tag">PIPELINE RUNNING</span>
+              <span class="pulse-indicator"></span>
+            </div>
+            <div class="card-body">
+              <div class="spinner-container">
+                <span class="spinner-char">ॐ</span>
+              </div>
+              <h2 id="loading-status-text">Querying the digital library and analyzing intent...</h2>
+              <p class="loading-substatus">Parsing query through Vidyut and resolving Sandhis</p>
+              
+              <!-- Pipeline Stepper -->
+              <div class="pipeline-stepper">
+                <div class="step active" id="step-normalizer">
+                  <div class="step-dot">1</div>
+                  <div class="step-label">Vidyut Sandhi Splitter</div>
+                </div>
+                <div class="step" id="step-retrieval">
+                  <div class="step-dot">2</div>
+                  <div class="step-label">FAISS & BM25 Hybrid Retrieval</div>
+                </div>
+                <div class="step" id="step-reranker">
+                  <div class="step-dot">3</div>
+                  <div class="step-label">Cross-Encoder Reranker</div>
+                </div>
+                <div class="step" id="step-generator">
+                  <div class="step-dot">4</div>
+                  <div class="step-label">Llama 3.3 Synthesis & Grounding</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Error State -->
+        <div id="error-state" class="workspace-state">
+          <div class="manuscript-error">
+            <div class="error-icon">🕱</div>
+            <h2>Retriever Error</h2>
+            <p id="error-message">Could not fetch or synthesize results. Please verify your query format or check the backend server logs.</p>
+            <button type="button" class="btn-rect secondary" id="error-reset-btn">Reset Workspace</button>
+          </div>
+        </div>
+
+        <!-- Results View -->
+        <div id="results-state" class="workspace-state">
+          <!-- Metadata Header Stamp -->
+          <div class="results-meta-stamp">
+            <div class="stamp-item">
+              <span class="label">INTENT</span>
+              <span class="value" id="result-intent">—</span>
+            </div>
+            <div class="stamp-item">
+              <span class="label">CONFIDENCE</span>
+              <span class="value" id="result-confidence">—</span>
+            </div>
+            <div class="stamp-item">
+              <span class="label">SOURCES</span>
+              <span class="value" id="result-sources">—</span>
+            </div>
+            <div class="stamp-item">
+              <span class="label">LATENCY</span>
+              <span class="value" id="result-time">—</span>
+            </div>
+          </div>
+
+          <!-- Synthesis Tab Container -->
+          <div class="workspace-tabs">
+            <button class="tab-btn active" data-tab="synthesis-tab">SYNTHESIS</button>
+            <button class="tab-btn" data-tab="sources-tab">RETRIEVED VERSES (<span id="citation-count">0</span>)</button>
+          </div>
+
+          <!-- Tab Contents -->
+          <div class="tab-content active" id="synthesis-tab">
+            <div class="manuscript-content">
+              <div class="answer-wrapper" id="answer-container">
+                <!-- Synthesized answer will be populated here -->
+              </div>
+            </div>
+          </div>
+
+          <div class="tab-content" id="sources-tab">
+            <div class="sources-list" id="sources-container">
+              <!-- Retrieved verse cards will be populated here -->
+            </div>
+          </div>
+        </div>
+      </article>
+    </main>
+  </div>
+</body>
+</html>

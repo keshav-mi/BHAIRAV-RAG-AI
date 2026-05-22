@@ -1,0 +1,14 @@
+# ============================================================
+# OPTIONAL — not required for core Bhairav API
+# ============================================================
+# ai4bharat-transliteration pulls fairseq, which often FAILS to build on Windows.
+# Bhairav works without it: entity maps + indic-transliteration (HK) + optional HTTP XLIT.
+#
+# Linux/WSL only (if you need local neural transliteration):
+#   pip install ai4bharat-transliteration
+#
+# Or enable HTTP fallback instead (no fairseq):
+#   set INDICXLIT_FALLBACK=true
+#   set AI4BHARAT_XLIT_ENABLED=false
+
+# ai4bharat-transliteration>=1.1.3

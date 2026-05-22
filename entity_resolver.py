@@ -14,7 +14,7 @@ from typing import Dict, List, Optional
 
 from rapidfuzz import fuzz, process
 
-from config import DATA_DIR, ENTITY_FUZZY_THRESHOLD, REQUIRE_HARVESTED_MAPS
+from config import DATA_DIR, ENTITY_FUZZY_THRESHOLD, REQUIRE_HARVESTED_MAPS, SYNONYM_FUZZY_ENABLED
 
 FUZZY_THRESHOLD = ENTITY_FUZZY_THRESHOLD
 
@@ -35,8 +35,11 @@ class EntityResolver:
         self.data_dir = data_dir or DATA_DIR
         self._entity_map: Dict[str, dict] = {}
         self._english_keys: List[str] = []
+        self._norm_english_keys: Dict[str, str] = {}  # precomputed: normalized_key → original_key
         self._deva_to_canonical: Dict[str, str] = {}
         self._epithet_to_canonical: Dict[str, str] = {}
+        self._synonym_lookup: Dict[str, List[str]] = {}
+        self._devanagari_synonym_keys: List[str] = []
         self._load()
 
     def _load(self) -> None:
@@ -52,6 +55,8 @@ class EntityResolver:
             with open(entity_path, encoding="utf-8") as f:
                 self._entity_map = json.load(f)
             self._english_keys = list(self._entity_map.keys())
+            # Precompute normalised→original mapping once so fuzzy resolve is O(1) per query
+            self._norm_english_keys = {self._normalize_key(k): k for k in self._english_keys}
             for eng, payload in self._entity_map.items():
                 deva = (payload.get("devanagari") or "").strip()
                 if deva:
@@ -71,10 +76,64 @@ class EntityResolver:
                 f"REQUIRE_HARVESTED_MAPS=true but missing maps under {self.data_dir}"
             )
 
+        self._build_synonym_lookup()
+        self._devanagari_synonym_keys = [
+            k for k in self._synonym_lookup
+            if any("\u0900" <= c <= "\u097F" for c in k)
+        ]
         print(
             f"EntityResolver | entities={len(self._entity_map):,} "
-            f"epithets={len(self._epithet_to_canonical):,}"
+            f"epithets={len(self._epithet_to_canonical):,} "
+            f"synonym_keys={len(self._synonym_lookup):,}"
         )
+
+    def _link_synonym(self, a: str, b: str) -> None:
+        if not a or not b or a == b:
+            return
+        for key, other in ((a, b), (b, a)):
+            if key not in self._synonym_lookup:
+                self._synonym_lookup[key] = []
+            if other not in self._synonym_lookup[key]:
+                self._synonym_lookup[key].append(other)
+
+    def _build_synonym_lookup(self) -> None:
+        """Bidirectional epithet ↔ canonical links from JSON maps only."""
+        for eng, payload in self._entity_map.items():
+            deva = (payload.get("devanagari") or "").strip()
+            if deva:
+                self._link_synonym(deva, eng)
+            for alias in payload.get("aliases", []):
+                if alias:
+                    self._link_synonym(deva or eng, alias)
+
+        for epithet, canonical in self._epithet_to_canonical.items():
+            self._link_synonym(epithet, canonical)
+
+    def expand_synonyms(self, tokens: List[str], max_per_token: int = 3) -> List[str]:
+        """FAISS-only epithet expansion — exact keys only unless SYNONYM_FUZZY_ENABLED."""
+        extras: List[str] = []
+        if not self._synonym_lookup:
+            return extras
+
+        for token in tokens:
+            if token in self._synonym_lookup:
+                extras.extend(self._synonym_lookup[token][:max_per_token])
+                continue
+            if not SYNONYM_FUZZY_ENABLED:
+                continue
+            # Fuzzy only on Devanagari keys (smaller set than full epithet list)
+            if not self._devanagari_synonym_keys:
+                continue
+            match = process.extractOne(
+                token,
+                self._devanagari_synonym_keys,
+                scorer=fuzz.ratio,
+                score_cutoff=FUZZY_THRESHOLD,
+            )
+            if match:
+                extras.extend(self._synonym_lookup[match[0]][:max_per_token])
+
+        return list(dict.fromkeys(extras))
 
     @staticmethod
     def _normalize_key(text: str) -> str:
@@ -143,17 +202,16 @@ class EntityResolver:
                     source="normalized",
                 )
 
-        # 5. Fuzzy English
-        if self._english_keys:
-            norm_keys = {self._normalize_key(k): k for k in self._english_keys}
+        # 5. Fuzzy English — uses precomputed _norm_english_keys (O(1), not rebuilt per call)
+        if self._norm_english_keys:
             match = process.extractOne(
                 norm,
-                list(norm_keys.keys()),
+                list(self._norm_english_keys.keys()),
                 scorer=fuzz.ratio,
                 score_cutoff=FUZZY_THRESHOLD,
             )
             if match:
-                eng_key = norm_keys[match[0]]
+                eng_key = self._norm_english_keys[match[0]]
                 p = self._entity_map[eng_key]
                 return EntityResolution(
                     canonical_id=eng_key,

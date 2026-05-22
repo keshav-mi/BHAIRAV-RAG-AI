@@ -13,8 +13,16 @@ from config import RERANKER_MODEL, RERANK_TOP_N
 class Reranker:
     def __init__(self):
         print(f"Loading reranker: {RERANKER_MODEL}")
-        self.model = CrossEncoder(RERANKER_MODEL)
-        print("Reranker ready")
+        try:
+            self.model = CrossEncoder(RERANKER_MODEL)
+            print("Reranker ready")
+        except Exception as e:
+            print("\n" + "!" * 60)
+            print(f"WARNING: Could not load reranker model '{RERANKER_MODEL}': {e}")
+            print("Reranker will fall back to Passthrough mode (no reranking).")
+            print("To fix the virtual memory error on Windows, please increase your pagefile size.")
+            print("!" * 60 + "\n")
+            self.model = None
 
     def rerank(
         self,
@@ -26,6 +34,12 @@ class Reranker:
     ) -> List[Dict]:
         if not chunks:
             return []
+
+        if self.model is None:
+            print("   Reranker is in Passthrough mode (model not loaded)")
+            for i, c in enumerate(chunks[:top_n]):
+                c["rerank_score"] = c.get("score", 1.0 - i * 0.01)
+            return chunks[:top_n]
 
         meta = retrieval_meta or {}
         if meta.get("rerank_policy") == "skip" or meta.get("skip_rerank"):
